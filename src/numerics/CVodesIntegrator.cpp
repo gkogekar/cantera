@@ -528,4 +528,26 @@ string CVodesIntegrator::getErrorInfo(int N)
     return to_string(s);
 }
 
+double CVodesIntegrator::lastStepSize()
+{
+    double h_last;
+    int result = CVodeGetLastStep(m_cvode_mem, &h_last);
+    if (result != CV_SUCCESS) {
+        throw CanteraError("CVodesIntegrator::lastStepSize",
+                           " failed. result = {}", result);
+    }
+    return h_last;
+}
+
+double CVodesIntegrator::nextStepSize()
+{
+    double h_next;
+    int result = CVodeGetCurrentStep(m_cvode_mem, &h_next);
+    if (result != CV_SUCCESS) {
+        throw CanteraError("CVodesIntegrator::nextStepSize",
+                           " failed. result = {}", result);
+    }
+    return h_next;
+}
+
 }

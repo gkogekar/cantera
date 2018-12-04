@@ -201,6 +201,16 @@ public:
         return 0.0;
     }
 
+    virtual double lastStepSize() {
+        warn("lastStepSize");
+        return 0.0;
+    }
+
+    virtual double nextStepSize() {
+        warn("nextStepSize");
+        return 0.0;
+    }
+
 private:
     doublereal m_dummy;
     void warn(const std::string& msg) const {

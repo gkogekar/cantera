@@ -62,6 +62,8 @@ public:
         return static_cast<int>(m_np);
     }
     virtual double sensitivity(size_t k, size_t p);
+    virtual double lastStepSize();
+    virtual double nextStepSize();
 
     //! Returns a string listing the weighted error estimates associated
     //! with each solution component.
