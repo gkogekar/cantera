@@ -23,6 +23,7 @@
 #include "cantera/thermo/IonsFromNeutralVPSSTP.h"
 #include "cantera/thermo/PureFluidPhase.h"
 #include "cantera/thermo/RedlichKwongMFTP.h"
+#include "cantera/thermo/PengRobinsonMFTP.h"
 #include "cantera/thermo/ConstDensityThermo.h"
 #include "cantera/thermo/SurfPhase.h"
 #include "cantera/thermo/EdgePhase.h"
@@ -70,7 +71,9 @@ ThermoFactory::ThermoFactory()
     reg("Redlich-Kister", []() { return new RedlichKisterVPSSTP(); });
     reg("RedlichKwong", []() { return new RedlichKwongMFTP(); });
     m_synonyms["RedlichKwongMFTP"] = "RedlichKwong";
-    reg("MaskellSolidSolnPhase", []() { return new MaskellSolidSolnPhase(); });
+	reg("PengRobinson", []() { return new PengRobinsonMFTP(); });
+	m_synonyms["PengRobinsonMFTP"] = "PengRobinson"; 
+	reg("MaskellSolidSolnPhase", []() { return new MaskellSolidSolnPhase(); });
     reg("PureLiquidWater", []() { return new WaterSSTP(); });
     reg("BinarySolutionTabulatedThermo", []() { return new BinarySolutionTabulatedThermo(); });
 }
