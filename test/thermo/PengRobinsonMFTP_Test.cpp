@@ -2,7 +2,6 @@
 #include "cantera/thermo/PengRobinsonMFTP.h"
 #include "cantera/thermo/ThermoFactory.h"
 
-
 namespace Cantera
 {
 
@@ -10,7 +9,7 @@ class PengRobinsonMFTP_Test : public testing::Test
 {
 public:
 	PengRobinsonMFTP_Test() {
-        test_phase.reset(newPhase("../data/co2_RK_example.cti"));
+        test_phase.reset(newPhase("../data/co2_PR_example.cti"));
     }
 
     //vary the composition of a co2-h2 mixture:
@@ -26,8 +25,8 @@ public:
 
 TEST_F(PengRobinsonMFTP_Test, construct_from_cti)
 {
-	PengRobinsonMFTP* redlich_kwong_phase = dynamic_cast<PengRobinsonMFTP*>(test_phase.get());
-    EXPECT_TRUE(redlich_kwong_phase != NULL);
+		PengRobinsonMFTP* peng_robinson_phase = dynamic_cast<PengRobinsonMFTP*>(test_phase.get());
+    EXPECT_TRUE(peng_robinson_phase != NULL);
 }
 
 TEST_F(PengRobinsonMFTP_Test, chem_potentials)

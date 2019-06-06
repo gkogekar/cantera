@@ -71,9 +71,9 @@ ThermoFactory::ThermoFactory()
     reg("Redlich-Kister", []() { return new RedlichKisterVPSSTP(); });
     reg("RedlichKwong", []() { return new RedlichKwongMFTP(); });
     m_synonyms["RedlichKwongMFTP"] = "RedlichKwong";
-	reg("PengRobinson", []() { return new PengRobinsonMFTP(); });
-	m_synonyms["PengRobinsonMFTP"] = "PengRobinson"; 
-	reg("MaskellSolidSolnPhase", []() { return new MaskellSolidSolnPhase(); });
+  	reg("PengRobinson", []() { return new PengRobinsonMFTP(); });
+  	m_synonyms["PengRobinsonMFTP"] = "PengRobinson";
+  	reg("MaskellSolidSolnPhase", []() { return new MaskellSolidSolnPhase(); });
     reg("PureLiquidWater", []() { return new WaterSSTP(); });
     reg("BinarySolutionTabulatedThermo", []() { return new BinarySolutionTabulatedThermo(); });
 }
