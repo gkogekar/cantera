@@ -10,6 +10,9 @@
 #include "cantera/base/Array.h"
 #include "cantera/thermo/IdealGasPhase.h"
 #include "cantera/kinetics/Kinetics.h"
+#include "cantera/thermo/SurfPhase.h"
+#include "cantera/kinetics/InterfaceKinetics.h"
+#include "cantera/numerics/FuncEval.h"
 
 namespace Cantera
 {
@@ -45,7 +48,8 @@ public:
     //!     to evaluate all thermodynamic, kinetic, and transport properties.
     //! @param nsp Number of species.
     //! @param points Initial number of grid points
-    StFlow(IdealGasPhase* ph = 0, size_t nsp = 1, size_t points = 1);
+
+	StFlow(IdealGasPhase* ph = 0, size_t nsp = 1, size_t points = 1, InterfaceKinetics* kinSurf = 0, size_t surfnsp = 0, size_t catIndex = 0, size_t surfFlag = 0);
 
     //! @name Problem Specification
     //! @{
@@ -62,6 +66,11 @@ public:
         return *m_kin;
     }
 
+	//Addition of interfaceKinetics object for catalytic surface
+	Kinetics& interfaceKinetics() {
+		return *m_surfkin;
+	}
+
     /**
      * Set the thermo manager. Note that the flow equations assume
      * the ideal gas equation.
@@ -74,6 +83,15 @@ public:
     void setKinetics(Kinetics& kin) {
         m_kin = &kin;
     }
+
+	//! Set the surface kinetics manager. 
+	void setSurfKinetics(InterfaceKinetics* kinSurf) {
+		m_surfkin = kinSurf;
+		m_surfindex = kinSurf->surfacePhaseIndex();
+		m_sphase = (SurfPhase*)&kinSurf->thermo(m_surfindex);
+		m_snsp = m_sphase->nSpecies();
+		m_first = 0;
+	}
 
     //! set the transport manager
     void setTransport(Transport& trans);
@@ -162,18 +180,35 @@ public:
         m_dovisc = true;
     }
 
+	size_t ind_catalyst;
+
+	//! Set flow configuration for axisymmetric counterflow with catalytic screen
+	void setCatalysisAxisymmetricFlow() {
+		m_type = cCatalysisAxisymmetricStagnationFlow;
+		m_dovisc = true;
+		m_catSurface = true;
+	}
+
+	void evalCatalystBoundary(doublereal* x, doublereal* rsd,
+		integer* diag, doublereal rdt);
+
     //! Return the type of flow domain being represented, either "Free Flame" or
     //! "Axisymmetric Stagnation".
     //! @see setFreeFlow setAxisymmetricFlow
-    virtual std::string flowType() {
-        if (m_type == cFreeFlow) {
-            return "Free Flame";
-        } else if (m_type == cAxisymmetricStagnationFlow) {
-            return "Axisymmetric Stagnation";
-        } else {
-            throw CanteraError("StFlow::flowType", "Unknown value for 'm_type'");
-        }
-    }
+	virtual std::string flowType() {
+		if (m_type == cFreeFlow) {
+			return "Free Flame";
+		}
+		else if (m_type == cAxisymmetricStagnationFlow) {
+			return "Axisymmetric Stagnation";
+		}
+		else if (m_type == cCatalysisAxisymmetricStagnationFlow) {
+			return "Catalytic Axisymmetric Stagnation";
+		}
+		else {
+			throw CanteraError("StFlow::flowType", "Unknown value for 'm_type'");
+		}
+	}
 
     void solveEnergyEqn(size_t j=npos);
 
@@ -390,7 +425,7 @@ protected:
 
     doublereal m_press; // pressure
 
-    // grid parameters
+	// grid parameters
     vector_fp m_dz;
 
     // mixture thermo properties
@@ -451,9 +486,22 @@ protected:
 
     bool m_dovisc;
 
-    //! Update the transport properties at grid points in the range from `j0`
-    //! to `j1`, based on solution `x`.
-    virtual void updateTransport(doublereal* x, size_t j0, size_t j1);
+	//! Update the transport properties at grid points in the range from `j0`
+	//! to `j1`, based on solution `x`.
+	virtual void updateTransport(doublereal* x, size_t j0, size_t j1);
+
+	//Additional parameters needed for surface phase 
+	bool m_catSurface = false;
+	doublereal m_surfTemp = 1000; // Temperature of the catalytic screen if the energy equation is off.
+	size_t m_do_surf = 0;
+	InterfaceKinetics* m_surfkin;
+	SurfPhase* m_sphase;
+	size_t m_surfindex, m_snsp, m_first;
+	vector_fp m_work, m_sdot;
+	vector_fp m_cov;
+	vector_fp rsd_surf;
+	vector_fp prevSoln_surf;
+	doublereal m_area2Vol, m_Tsurf = 0;
 
 public:
     //! Location of the point where temperature is fixed

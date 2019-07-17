@@ -13,10 +13,17 @@ using namespace std;
 namespace Cantera
 {
 
-StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points) :
+StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points, InterfaceKinetics* kinSurf, size_t surfnsp, size_t catIndex, size_t surfFlag) :
     Domain1D(nsp+c_offset_Y, points),
     m_press(-1.0),
     m_nsp(nsp),
+	//Additional parameters needed for surface phase 
+	m_snsp(surfnsp),
+	ind_catalyst(0),
+	m_sphase(0),
+	m_surfkin(0),
+	m_surfindex(0),
+	m_area2Vol(0.0),
     m_thermo(0),
     m_kin(0),
     m_trans(0),
@@ -33,6 +40,7 @@ StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points) :
     m_type = cFlowType;
     m_points = points;
     m_thermo = ph;
+	m_surfkin = kinSurf;
 
     if (ph == 0) {
         return; // used to create a dummy object
@@ -43,6 +51,21 @@ StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points) :
         m_nsp = nsp2;
         Domain1D::resize(m_nsp+c_offset_Y, points);
     }
+
+	//Catalytic screen
+	if (kinSurf == 0) {
+		writelog("No surface phase present \n");
+		m_snsp = 0;
+	}
+	else {
+		setSurfKinetics(kinSurf);
+		size_t nspSurf = m_sphase->nSpecies();
+		m_work.resize(m_snsp, 0.0);
+		m_sdot.resize(m_snsp + m_nsp, 0.0);
+		m_cov.resize(m_snsp, 0.0);
+		m_do_surf = surfFlag;
+		ind_catalyst = catIndex;
+	}
 
     // make a local copy of the species molecular weight vector
     m_wt = m_thermo->molecularWeights();
@@ -157,10 +180,14 @@ void StFlow::setTransport(Transport& trans)
 
 void StFlow::_getInitialSoln(double* x)
 {
-    for (size_t j = 0; j < m_points; j++) {
+	m_area2Vol = 1e5 / 2; //Hard-coded for now
+	for (size_t j = 0; j < m_points; j++) {
         T(x,j) = m_thermo->temperature();
         m_thermo->getMassFractions(&Y(x, 0, j));
     }
+	//Hard-coded for now
+	m_cov[0] = 0.5;
+	m_cov[m_snsp - 1] = 0.4;
 }
 
 void StFlow::setGas(const doublereal* x, size_t j)
@@ -255,7 +282,7 @@ void StFlow::eval(size_t jg, doublereal* xg,
     }
 
     updateProperties(jg, x, jmin, jmax);
-    evalResidual(x, rsd, diag, rdt, jmin, jmax);
+	evalResidual(x, rsd, diag, rdt, jmin, jmax);
 }
 
 void StFlow::updateProperties(size_t jg, double* x, size_t jmin, size_t jmax)
@@ -398,7 +425,11 @@ void StFlow::evalResidual(double* x, double* rsd, int* diag,
             evalRightBoundary(x, rsd, diag, rdt);
             // set residual of poisson's equ to zero
             rsd[index(c_offset_E, j)] = x[index(c_offset_E, j)];
-        } else { // interior points
+		} else if (j == ind_catalyst && m_type == cCatalysisAxisymmetricStagnationFlow) {
+			evalCatalystBoundary(x, rsd, diag, rdt);
+			// set residual of poisson's equ to zero
+			rsd[index(c_offset_E, j)] = x[index(c_offset_E, j)];
+		} else { // interior points
             evalContinuity(j, x, rsd, diag, rdt);
             // set residual of poisson's equ to zero
             rsd[index(c_offset_E, j)] = x[index(c_offset_E, j)];
@@ -707,8 +738,9 @@ void StFlow::restore(const XML_Node& dom, doublereal* soln, int loglevel)
                     soln[index(k+c_offset_Y,j)] = x[j];
                 }
             }
-        } else {
-            ignored.push_back(nm);
+		}
+		else {
+			ignored.push_back(nm);
         }
     }
 
@@ -763,7 +795,21 @@ void StFlow::restore(const XML_Node& dom, doublereal* soln, int loglevel)
         }
     }
 
-    if (dom.hasChild("refine_criteria")) {
+    //Restore surface coverages at the catalytic screen
+	if (dom.hasChild("surfCoverages")) {
+		getFloatArray(dom, x, false, "", "surfCoverages");
+		if (x.size() == m_snsp) {
+			for (size_t i = 0; i < x.size(); i++) {
+				m_cov[i] = x[i];
+			}
+		}
+		else if (!x.empty()) {
+			throw CanteraError("StFlow::restore", "surfCoverages is length {}"
+				"but should be length {}", x.size(), m_snsp);
+		}
+	}
+	
+	if (dom.hasChild("refine_criteria")) {
         XML_Node& ref = dom.child("refine_criteria");
         refiner().setCriteria(getFloat(ref, "ratio"), getFloat(ref, "slope"),
                               getFloat(ref, "curve"), getFloat(ref, "prune"));
@@ -824,6 +870,13 @@ XML_Node& StFlow::save(XML_Node& o, const doublereal* const sol)
         values[i] = m_do_species[i];
     }
     addNamedFloatArray(flow, "species_enabled", m_nsp, &values[0]);
+
+	//Write surface coverages at the catalytic screen
+	values.resize(m_snsp);
+	for (size_t i = 0; i < m_snsp; i++) {
+		values[i] = m_cov[i];
+	}
+	addNamedFloatArray(flow, "surfCoverages", m_snsp, &values[0]);
 
     XML_Node& ref = flow.addChild("refine_criteria");
     addFloat(ref, "ratio", refiner().maxRatio());
@@ -918,7 +971,7 @@ void StFlow::evalRightBoundary(double* x, double* rsd, int* diag, double rdt)
     }
     rsd[index(c_offset_Y + rightExcessSpecies(), j)] = 1.0 - sum;
     diag[index(c_offset_Y + rightExcessSpecies(), j)] = 0;
-    if (domainType() == cAxisymmetricStagnationFlow) {
+	if (domainType() == cAxisymmetricStagnationFlow || domainType() == cCatalysisAxisymmetricStagnationFlow) {
         rsd[index(c_offset_U,j)] = rho_u(x,j);
         if (m_do_energy[j]) {
             rsd[index(c_offset_T,j)] = T(x,j);
@@ -940,7 +993,7 @@ void StFlow::evalContinuity(size_t j, double* x, double* rsd, int* diag, double 
     //
     //    d(\rho u)/dz + 2\rho V = 0
     //----------------------------------------------
-    if (domainType() == cAxisymmetricStagnationFlow) {
+	if (domainType() == cAxisymmetricStagnationFlow || domainType() == cCatalysisAxisymmetricStagnationFlow) {
         // Note that this propagates the mass flow rate information to the left
         // (j+1 -> j) from the value specified at the right boundary. The
         // lambda information propagates in the opposite direction.
@@ -967,4 +1020,156 @@ void StFlow::evalContinuity(size_t j, double* x, double* rsd, int* diag, double 
     }
 }
 
+void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag, doublereal rdt)
+{
+	if (m_do_surf == 1)
+	{
+		//Equilibrate coverages for the first time-step
+		if (m_first == 0)
+		{
+			//Get coverages from the initial gas phase solution
+			setGas(x, ind_catalyst);
+			m_sphase->setTemperature(T(x, ind_catalyst));
+			m_sphase->setCoverages(m_cov.data());
+			m_surfkin->advanceCoverages(1);
+			m_sphase->getCoverages(m_cov.data());
+			m_first++;
+		}
+	}
+
+	size_t j = ind_catalyst;
+
+	//algebraic constraint
+	diag[index(c_offset_U, j)] = 0;
+	//----------------------------------------------
+	//    Continuity equation
+	//
+	//    d(\rho u)/dz + 2\rho V = 0
+	//----------------------------------------------
+
+	// This equation is modified furthur if the surface is present
+	rsd[index(c_offset_U, j)] = -(rho_u(x, j + 1) - rho_u(x, j)) / m_dz[j]
+		- (density(j + 1)*V(x, j + 1) + density(j)*V(x, j));
+
+
+	//------------------------------------------------
+	//    Radial momentum equation V = 0
+	//
+	//    \rho dV/dt + \rho u dV/dz + \rho V^2
+	//       = d(\mu dV/dz)/dz - lambda
+	//-------------------------------------------------
+	rsd[index(c_offset_V, j)] = V(x, j) - 0.0;
+	diag[index(c_offset_V, j)] = 0;
+
+	double qRad = 0, qConv = 0, qSurf = 0;
+
+	doublereal Tgas = T(x, j);
+	m_Tsurf = Tgas;
+
+	//Save enthalpies of the gas phase at gas temperature in an array m_hk_g
+	m_thermo->setTemperature(Tgas);
+	setGas(x, j);
+	const vector_fp& m_hk_g = m_thermo->enthalpy_RT_ref();
+
+	vector_fp xMole(m_nsp);
+	m_thermo->getMoleFractions(&xMole[0]);
+
+	//Save current mole fractions of the gas phase
+	if (m_do_surf == 1)
+	{
+		m_sphase->setTemperature(m_Tsurf);
+		m_sphase->getCoverages(m_cov.data());
+		m_surfkin->getNetProductionRates(m_sdot.data());
+
+		//Psuedo state equation solver for surface temperature and coverages
+		m_surfkin->advanceCoverages(1e-8);
+		m_sphase->getCoverages(m_cov.data());				// m_cov has been updated to new coverages
+		m_Tsurf = m_sphase->temperature();					// m_Tsurf has been updated to new temperature
+		m_surfkin->getNetProductionRates(m_sdot.data());	// Now sdot has been updated 		
+	}
+
+	//-------------------------------------------------
+	//    Species equations
+	//
+	//   \rho dY_k/dt + \rho u dY_k/dz + dJ_k/dz
+	//   = M_k\omega_k
+	//-------------------------------------------------
+	setGas(x, j);
+	getWdot(x, j);
+	doublereal sum1 = 0;
+	for (size_t k = 0; k < m_nsp; k++) {
+		sum1 += m_sdot[k] * m_wt[k];
+	}
+
+	for (size_t k = 0; k < m_nsp; k++) {
+		double convec = rho_u(x, j)*dYdz(x, k, j);
+		double diffus = 2.0*(m_flux(k, j) - m_flux(k, j - 1))
+			/ (z(j + 1) - z(j - 1));
+		rsd[index(c_offset_Y + k, j)]
+			= (m_wt[k] * (wdot(k, j))
+			- convec - diffus) / m_rho[j]
+			- rdt*(Y(x, k, j) - Y_prev(k, j));
+
+		//Add contribution due to surface reactions
+		if (m_do_surf == 1) {
+
+			//Species continuity equation
+			rsd[index(c_offset_Y + k, j)] += m_area2Vol* (m_sdot[k] * m_wt[k] - Y(x, k, j)*sum1) / m_rho[j];
+
+			//Continuity equation
+			rsd[index(c_offset_U, j)] += (m_sdot[k] * m_wt[k] * m_area2Vol);
+
+		}
+		diag[index(c_offset_Y + k, j)] = 1;
+	}
+	rsd[index(c_offset_L, j)] = lambda(x, j) - lambda(x, j - 1);
+	diag[index(c_offset_L, j)] = 0;
+
+	//---------------------------------------------- -
+	//    energy equation
+	//
+	//    \rho c_p dT/dt + \rho c_p u dT/dz
+	//    = d(k dT/dz)/dz
+	//      - sum_k(\omega_k h_k_ref)
+	//      - sum_k(J_k c_p_k / M_k) dT/dz
+	//-----------------------------------------------
+	m_do_energy[j] = 1;
+	if (m_do_energy[j]) {
+		setGas(x, j);
+		// heat release term
+		const vector_fp& h_RT = m_thermo->enthalpy_RT_ref();
+		const vector_fp& cp_R = m_thermo->cp_R_ref();
+		double sum = 0.0;
+		double sum2 = 0.0;
+		for (size_t k = 0; k < m_nsp; k++) {
+			double flxk = 0.5*(m_flux(k, j - 1) + m_flux(k, j));
+			sum += wdot(k, j)*h_RT[k];
+			sum2 += flxk*cp_R[k] / m_wt[k];
+		}
+		sum *= GasConstant * T(x, j);
+		if (m_do_surf == 1) {
+			//add energy from the surface reactions
+			for (size_t k = 0; k < m_nsp; k++) {
+				sum += m_sdot[k] * m_area2Vol * m_hk_g[k] * GasConstant * Tgas;
+			}
+		}
+
+		double dtdzj = dTdz(x, j);
+		sum2 *= GasConstant * dtdzj;
+
+		rsd[index(c_offset_T, j)] = -m_cp[j] * rho_u(x, j)*dtdzj
+			- divHeatFlux(x, j) - sum - sum2;
+		rsd[index(c_offset_T, j)] /= (m_rho[j] * m_cp[j]);
+		rsd[index(c_offset_T, j)] -= rdt*(T(x, j) - T_prev(j));
+		//Radiation is ignored
+		diag[index(c_offset_T, j)] = 1;
+	}
+	else {
+		// residual equations if the energy equation is disabled
+		rsd[index(c_offset_T, j)] = T(x, j) - m_surfTemp;
+		diag[index(c_offset_T, j)] = 0;
+	}
+
+	//showSolution(x);
+}
 } // namespace

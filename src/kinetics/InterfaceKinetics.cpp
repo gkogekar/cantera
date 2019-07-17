@@ -774,6 +774,7 @@ void InterfaceKinetics::advanceCoverages(doublereal tstep, doublereal rtol,
     if (m_integrator == 0) {
         vector<InterfaceKinetics*> k{this};
         m_integrator = new ImplicitSurfChem(k);
+		m_integrator->initialize();
     }
     m_integrator->setTolerances(rtol, atol);
     m_integrator->setMaxStepSize(maxStepSize);
@@ -791,7 +792,7 @@ void InterfaceKinetics::solvePseudoSteadyStateProblem(
     if (m_integrator == 0) {
         vector<InterfaceKinetics*> k{this};
         m_integrator = new ImplicitSurfChem(k);
-        m_integrator->initialize();
+		//m_integrator->initialize();
     }
     m_integrator->setIOFlag(m_ioFlag);
     // New direct method to go here

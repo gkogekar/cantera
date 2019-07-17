@@ -34,7 +34,7 @@ void onedimmethods(int nlhs, mxArray* plhs[],
             kin = getInt(prhs[4]);
             tr = getInt(prhs[5]);
             itype = getInt(prhs[6]);
-			//Gandhali
+			
 			iSurf = getInt(prhs[7]);
 			isurfkin = getInt(prhs[8]);
 			catIndex = getInt(prhs[9]);

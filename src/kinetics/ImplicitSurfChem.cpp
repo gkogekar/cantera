@@ -177,15 +177,17 @@ void ImplicitSurfChem::eval(doublereal time, doublereal* y,
     updateState(y); // synchronize the surface state(s) with y
     size_t loc = 0;
     for (size_t n = 0; n < m_surf.size(); n++) {
-        double rs0 = 1.0/m_surf[n]->siteDensity();
+		ThermoPhase* surf_ptr = m_surf[n];
+		double rs0 = 1.0 / m_surf[n]->siteDensity();
         m_vecKinPtrs[n]->getNetProductionRates(m_work.data());
-        size_t kstart = m_vecKinPtrs[n]->kineticsSpeciesIndex(0,m_surfindex[n]);
+		size_t kstart = m_vecKinPtrs[n]->kineticsSpeciesIndex(0,m_surfindex[n]);
         double sum = 0.0;
-        for (size_t k = 1; k < m_nsp[n]; k++) {
-            ydot[k + loc] = m_work[kstart + k] * rs0 * m_surf[n]->size(k);
-            sum -= ydot[k];
-        }
-        ydot[loc] = sum;
+		//order: [theta1 ......, thetaN]
+		for (size_t k = 1; k < m_nsp[n]; k++) {
+			ydot[k + loc] = m_work[kstart + k] * rs0 * m_surf[n]->size(k);
+			sum -= ydot[k];
+		}
+		ydot[loc] = sum;
         loc += m_nsp[n];
     }
 }
