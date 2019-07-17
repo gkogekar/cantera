@@ -365,19 +365,26 @@ extern "C" {
 
     //------------------ stagnation flow domains --------------------
 
-    int stflow_new(int iph, int ikin, int itr, int itype)
+	int stflow_new(int iph, int ikin, int itr, int itype, int iSurf, int isurfkin, int catIndex, int surfFlag)
     {
         try {
             IdealGasPhase& ph = ThermoCabinet::get<IdealGasPhase>(iph);
-            StFlow* x = new StFlow(&ph, ph.nSpecies(), 2);
-            if (itype == 1) {
-                x->setAxisymmetricFlow();
-            } else if (itype == 2) {
-                x->setFreeFlow();
-            } else {
-                delete x;
-                return -2;
-            }
+			//Gandhali
+			InterfaceKinetics& kSurf = Cabinet<Kinetics>::get<InterfaceKinetics>(iSurf);
+			StFlow* x = new StFlow(&ph, ph.nSpecies(), 2, &kSurf, kSurf.nTotalSpecies(), catIndex, surfFlag);
+			if (itype == 1) {
+				x->setAxisymmetricFlow();
+			}
+			else if (itype == 2) {
+				x->setFreeFlow();
+			}
+			else if (itype == 3) {
+				x->setCatalysisAxisymmetricFlow();
+			}
+			else {
+				delete x;
+				return -2;
+			}
             x->setKinetics(KineticsCabinet::item(ikin));
             x->setTransport(TransportCabinet::item(itr));
             return DomainCabinet::add(x);
