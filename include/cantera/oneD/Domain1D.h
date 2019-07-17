@@ -18,6 +18,7 @@ namespace Cantera
 const int cFlowType = 50;
 const int cFreeFlow = 51;
 const int cAxisymmetricStagnationFlow = 52;
+const int cCatalysisAxisymmetricStagnationFlow = 53;
 const int cConnectorType = 100;
 const int cSurfType = 102;
 const int cInletType = 104;
