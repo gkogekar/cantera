@@ -12,12 +12,14 @@ class FlameBase(Sim1D):
     """ Base class for flames with a single flow domain """
     __slots__ = ('gas',)
 
-    def __init__(self, domains, gas, grid=None):
+    def __init__(self, domains, gas, grid=None, surface=None, catIndex=None, surfFlag = None):
         """
         :param gas:
             object to use to evaluate all gas properties and reaction rates
         :param grid:
             array of initial grid points
+		:param surface:
+			surface object
         """
         if grid is None:
             grid = np.linspace(0.0, 0.1, 6)
@@ -25,6 +27,13 @@ class FlameBase(Sim1D):
         super().__init__(domains)
         self.gas = gas
         self.flame.P = gas.P
+
+        if surface is not None:
+            self.surface = surface
+		
+        if surface is None:
+            print('WARNING: Surface is not present')
+		
 
     def set_refine_criteria(self, ratio=10.0, slope=0.8, curve=0.8, prune=0.0):
         """
@@ -1036,6 +1045,297 @@ class CounterflowDiffusionFlame(FlameBase):
         """
         emf = self.elemental_mass_fraction(m)
         return (emf - emf[-1]) / (emf[0] - emf[-1])
+		
+class CounterflowDiffusionFlameCatalysis(FlameBase):
+    """ A counterflow diffusion flame with catalytic screen placed in between the air and fuel inlets """
+    __slots__ = ('fuel_inlet', 'flame', 'surface', 'oxidizer_inlet')
+
+    def __init__(self, gas, grid=None, width=None, surface=None, catIndex=0, surfFlag = 0):
+        """
+        :param gas:
+            `Solution` (using the IdealGas thermodynamic model) used to
+            evaluate all gas properties and reaction rates.
+        :param grid:
+            A list of points to be used as the initial grid. Not recommended
+            unless solving only on a fixed grid; Use the `width` parameter
+            instead.
+        :param width:
+            Defines a grid on the interval [0, width] with internal points
+            determined automatically by the solver.
+		:param surface:
+            A Kinetics object used to compute any surface reactions.
+
+        A domain of class `IdealGasFlow` named ``flame`` will be created to
+        represent the flame and set to axisymmetric stagnation flow. The three
+        domains comprising the stack are stored as ``self.fuel_inlet``,
+        ``self.flame``, and ``self.oxidizer_inlet``.
+        """
+        self.fuel_inlet = Inlet1D(name='fuel_inlet', phase=gas)
+        self.fuel_inlet.T = gas.T
+		
+        self.oxidizer_inlet = Inlet1D(name='oxidizer_inlet', phase=gas)
+        self.oxidizer_inlet.T = gas.T
+
+        self.flame = IdealGasFlow(gas, surface, name='flame', catIndex = catIndex, surfFlag = surfFlag)
+        self.flame.set_catalysisaxisymmetric_flow()
+
+        if width is not None:
+            grid = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0]) * width
+
+        if surface is None:
+            self.surface = Surface1D(name='surface', phase=gas)
+            self.surface.T = gas.T
+        else:
+            self.surface = ReactingSurface1D(name='surface', phase=gas)
+            self.surface.set_kinetics(surface)
+            self.surface.T = surface.T
+
+        super().__init__((self.fuel_inlet, self.flame, self.oxidizer_inlet), gas, grid, self.surface, catIndex, surfFlag)
+		
+
+    def set_initial_guess(self):
+        """
+        Set the initial guess for the solution. The initial guess is generated
+        by assuming infinitely-fast chemistry.
+        """
+
+        super().set_initial_guess()
+
+        moles = lambda el: (self.gas.elemental_mass_fraction(el) /
+                            self.gas.atomic_weight(el))
+
+        # Compute stoichiometric mixture composition
+        Yin_f = self.fuel_inlet.Y
+        mdotf = self.fuel_inlet.mdot
+        u0f = mdotf / self.gas.density
+        T0f = self.fuel_inlet.T
+
+        sFuel = moles('O')
+        if 'C' in self.gas.element_names:
+            sFuel -= 2 * moles('C')
+        if 'H' in self.gas.element_names:
+            sFuel -= 0.5 * moles('H')
+
+
+        Yin_o = self.oxidizer_inlet.Y
+        self.gas.TPY = self.oxidizer_inlet.T, self.P, Yin_o
+        mdoto = self.oxidizer_inlet.mdot
+        u0o = mdoto / self.gas.density
+        T0o = self.oxidizer_inlet.T
+
+        
+        sOx = moles('O')
+        if 'C' in self.gas.element_names:
+            sOx -= 2 * moles('C')
+        if 'H' in self.gas.element_names:
+            sOx -= 0.5 * moles('H')
+
+        zst = 1.0 / (1 - sFuel / sOx)
+        Yst = zst * Yin_f + (1.0 - zst) * Yin_o
+
+        # get adiabatic flame temperature and composition
+        Tbar = 0.5 * (T0f + T0o)
+        self.gas.TPY = Tbar, self.P, Yst
+        self.gas.equilibrate('HP')
+        Yeq = self.gas.Y
+        Teq = self.gas.T
+
+        # estimate strain rate
+        zz = self.flame.grid
+        dz = zz[-1] - zz[0]
+        a = (u0o + u0f)/dz
+        kOx = (self.gas.species_index('O2') if 'O2' in self.gas.species_names else
+               self.gas.species_index('o2'))
+        f = np.sqrt(a / (2.0 * self.gas.mix_diff_coeffs[kOx]))
+
+        x0 = np.sqrt(mdotf*u0f) * dz / (np.sqrt(mdotf*u0f) + np.sqrt(mdoto*u0o))
+        nz = len(zz)
+
+        Y = np.zeros((nz, self.gas.n_species))
+        T = np.zeros(nz)
+        Yin_f_gas = Yin_f[:self.gas.n_species]
+        Yin_o_gas = Yin_o[:self.gas.n_species]
+        for j in range(nz):
+            x = zz[j] - zz[0]
+            zeta = f * (x - x0)
+            zmix = 0.5 * (1.0 - erf(zeta))
+            if zmix > zst:
+                Y[j] = Yeq + (Yin_f_gas - Yeq) * (zmix - zst) / (1.0 - zst)
+                T[j] = Teq + (T0f - Teq) * (zmix - zst) / (1.0 - zst)
+            else:
+                Y[j] = Yin_o + zmix * (Yeq - Yin_o_gas) / zst
+                T[j] = T0o + (Teq - T0o) * zmix / zst
+
+        T[0] = T0f
+        T[-1] = T0o
+        zrel = (zz - zz[0])/dz
+
+        self.set_profile('u', [0.0, 1.0], [u0f, -u0o])
+        self.set_profile('V', [0.0, x0/dz, 1.0], [0.0, a, 0.0])
+        self.set_profile('T', zrel, T)
+        for k,spec in enumerate(self.gas.species_names):
+            self.set_profile(spec, zrel, Y[:,k])
+
+    def extinct(self):
+        return max(self.T) - max(self.fuel_inlet.T, self.oxidizer_inlet.T) < 10
+
+    def solve(self, loglevel=1, refine_grid=True, auto=False):
+        """
+        Solve the problem.
+
+        :param loglevel:
+            integer flag controlling the amount of diagnostic output. Zero
+            suppresses all output, and 5 produces very verbose output.
+        :param refine_grid:
+            if True, enable grid refinement.
+        :param auto: if True, sequentially execute the different solution stages
+            and attempt to automatically recover from errors. Attempts to first
+            solve on the initial grid with energy enabled. If that does not
+            succeed, a fixed-temperature solution will be tried followed by
+            enabling the energy equation, and then with grid refinement enabled.
+            If non-default tolerances have been specified or multicomponent
+            transport is enabled, an additional solution using these options
+            will be calculated.
+        """
+        super().solve(loglevel, refine_grid, auto)
+        # Do some checks if loglevel is set
+        if loglevel > 0:
+            if self.extinct():
+                print('WARNING: Flame is extinct.')
+
+            # Check if the flame is very thick
+            # crude width estimate based on temperature
+            z_flame = self.grid[self.T > np.max(self.T) / 2]
+            flame_width = z_flame[-1] - z_flame[0]
+            domain_width = self.grid[-1] - self.grid[0]
+            if flame_width / domain_width > 0.4:
+                print('WARNING: The flame is thick compared to the domain '
+                      'size. The flame might be affected by the plug-flow '
+                      'boundary conditions. Consider increasing the inlet mass '
+                      'fluxes or using a larger domain.')
+
+            # Check if the temperature peak is close to a boundary
+            z_center = (self.grid[np.argmax(self.T)] - self.grid[0]) / domain_width
+            if z_center < 0.25:
+                print('WARNING: The flame temperature peak is close to the '
+                      'fuel inlet. Consider increasing the ratio of the '
+                      'fuel inlet mass flux to the oxidizer inlet mass flux.')
+            if z_center > 0.75:
+                print('WARNING: The flame temperature peak is close to the '
+                      'oxidizer inlet. Consider increasing the ratio of the '
+                      'oxidizer inlet mass flux to the fuel inlet mass flux.')
+
+    r"""def strain_rate(self, definition, fuel=None, oxidizer='O2', stoich=None):
+        
+        Return the axial strain rate of the counterflow diffusion flame in 1/s.
+
+        :param definition:
+            The definition of the strain rate to be calculated. Options are:
+            ``mean``, ``max``, ``stoichiometric``, ``potential_flow_fuel``, and
+            ``potential_flow_oxidizer``.
+        :param fuel: The fuel species. Used only if *definition* is
+            ``stoichiometric``.
+        :param oxidizer: The oxidizer species, default ``O2``. Used only if
+            *definition* is ``stoichiometric``.
+        :param stoich: The molar stoichiometric oxidizer-to-fuel ratio.
+            Can be omitted if the oxidizer is ``O2``. Used only if *definition*
+            is ``stoichiometric``.
+
+        The parameter *definition* sets the method to compute the strain rate.
+        Possible options are:
+
+        ``mean``:
+            The mean axial velocity gradient in the entire domain
+
+           .. math:: a_{mean} = \left| \frac{\Delta u}{\Delta z} \right|
+
+        ``max``:
+            The maximum axial velocity gradient
+
+            .. math:: a_{max} = \max \left( \left| \frac{du}{dz} \right| \right)
+
+        ``stoichiometric``:
+            The axial velocity gradient at the stoichiometric surface.
+
+            .. math::
+
+                a_{stoichiometric} = \left| \left. \frac{du}{dz}
+                \right|_{\phi=1} \right|
+
+            This method uses the additional keyword arguments *fuel*,
+            *oxidizer*, and *stoich*.
+
+            >>> f.strain_rate('stoichiometric', fuel='H2', oxidizer='O2',
+                              stoich=0.5)
+
+        ``potential_flow_fuel``:
+            The corresponding axial strain rate for a potential flow boundary
+            condition at the fuel inlet.
+
+            .. math:: a_{f} = \sqrt{-\frac{\Lambda}{\rho_{f}}}
+
+        ``potential_flow_oxidizer``:
+            The corresponding axial strain rate for a potential flow boundary
+            condition at the oxidizer inlet.
+
+            .. math:: a_{o} = \sqrt{-\frac{\Lambda}{\rho_{o}}}
+        
+        if definition == 'mean':
+            return - (self.u[-1] - self.u[0]) / self.grid[-1]
+
+        elif definition == 'max':
+            return np.max(np.abs(np.gradient(self.u) / np.gradient(self.grid)))
+
+        elif definition == 'stoichiometric':
+            if fuel is None:
+                raise KeyError('Required argument "fuel" not defined')
+            if oxidizer != 'O2' and stoich is None:
+                raise KeyError('Required argument "stoich" not defined')
+
+            if stoich is None:
+                # oxidizer is O2
+                stoich = - 0.5 * self.gas.n_atoms(fuel, 'O')
+                if 'H' in self.gas.element_names:
+                    stoich += 0.25 * self.gas.n_atoms(fuel, 'H')
+                if 'C' in self.gas.element_names:
+                    stoich += self.gas.n_atoms(fuel, 'C')
+
+            d_u_d_z = np.gradient(self.u) / np.gradient(self.grid)
+            phi = (self.X[self.gas.species_index(fuel)] * stoich /
+                   np.maximum(self.X[self.gas.species_index(oxidizer)], 1e-20))
+            z_stoich = np.interp(-1., -phi, self.grid)
+            return np.abs(np.interp(z_stoich, self.grid, d_u_d_z))
+
+        elif definition == 'potential_flow_fuel':
+            return np.sqrt(- self.L[0] / self.density[0])
+
+        elif definition == 'potential_flow_oxidizer':
+            return np.sqrt(- self.L[0] / self.density[-1])
+
+        else:
+            raise ValueError('Definition "' + definition + '" is not available')
+
+    def mixture_fraction(self, m):
+        
+        Compute the mixture fraction based on element *m*
+
+        The mixture fraction is computed from the elemental mass fraction of
+        element *m*, normalized by its values on the fuel and oxidizer
+        inlets:
+
+        .. math:: Z = \frac{Z_{\mathrm{mass},m}(z) -
+                            Z_{\mathrm{mass},m}(z_\mathrm{oxidizer})}
+                           {Z_{\mathrm{mass},m}(z_\mathrm{fuel}) -
+                            Z_{\mathrm{mass},m}(z_\mathrm{oxidizer})}
+
+        :param m:
+            The element based on which the mixture fraction is computed,
+            may be specified by name or by index
+
+        >>> f.mixture_fraction('H')
+        
+        emf = self.elemental_mass_fraction(m)
+        return (emf - emf[-1]) / (emf[0] - emf[-1]) """
 
 
 class ImpingingJet(FlameBase):

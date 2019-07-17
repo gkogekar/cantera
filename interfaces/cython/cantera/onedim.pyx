@@ -490,7 +490,21 @@ cdef class _FlowBase(Domain1D):
         flames, using specified inlet mass fluxes.
         """
         self.flow.setAxisymmetricFlow()
+		
+    def set_catalysisaxisymmetric_flow(self):
+        """
+        Set flow configuration for axisymmetric counterflow or burner-stabilized
+        flames, using specified inlet mass fluxes and also with catalytic screen in between.
+        """
+        self.flow.setCatalysisAxisymmetricFlow()
+        print('WARNING: Flame with Catalytic screen')
 
+    def set_SurfKinetics(self, Kinetics kin):
+        """Set the kinetics manager (surface reaction mechanism object)."""
+        if pystr(kin.kinetics.kineticsType()) not in ("Surf", "Edge"):
+            raise TypeError('Kinetics object must be derived from '
+                            'InterfaceKinetics.')
+        """self.surf.setKineticsMgr(<CxxInterfaceKinetics*>kin.kinetics)"""		
 
 cdef CxxIdealGasPhase* getIdealGasPhase(ThermoPhase phase) except *:
     if pystr(phase.thermo.type()) != "IdealGas":
@@ -528,11 +542,10 @@ cdef class IdealGasFlow(_FlowBase):
     equations assume an ideal gas mixture.  Arbitrary chemistry is allowed, as
     well as arbitrary variation of the transport properties.
     """
-    def __cinit__(self, _SolutionBase thermo, *args, **kwargs):
+    def __cinit__(self, _SolutionBase thermo, _SolutionBase kin, *args, **kwargs):
         gas = getIdealGasPhase(thermo)
-        self.flow = new CxxStFlow(gas, thermo.n_species, 2)
-
-
+        self.flow = new CxxStFlow(gas, thermo.n_species, 2, <CxxInterfaceKinetics*>kin.kinetics, 0, kwargs['catIndex'], kwargs['surfFlag'])
+		
 cdef class IonFlow(_FlowBase):
     """
     An ion flow domain.
