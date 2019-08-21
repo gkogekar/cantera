@@ -180,14 +180,14 @@ void StFlow::setTransport(Transport& trans)
 
 void StFlow::_getInitialSoln(double* x)
 {
-	m_area2Vol = 1e5 / 2; //Hard-coded for now
+	m_area2Vol = 1e4 / 2; //Hard-coded for now
 	for (size_t j = 0; j < m_points; j++) {
         T(x,j) = m_thermo->temperature();
         m_thermo->getMassFractions(&Y(x, 0, j));
     }
 	//Hard-coded for now
-	m_cov[0] = 0.5;
-	m_cov[m_snsp - 1] = 0.4;
+	//m_cov[0] = 0.5;
+	m_cov[m_snsp - 1] = 1.0;
 }
 
 void StFlow::setGas(const doublereal* x, size_t j)
@@ -1170,6 +1170,11 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 		diag[index(c_offset_T, j)] = 0;
 	}
 
+    //Print coverages
+    for (size_t k = 0; k < m_snsp; k++) {
+        //writelog("\n {} = {} ", m_sphase->speciesName(k), m_cov[k]);
+    }
+    //writelog("\n");
 	//showSolution(x);
 }
 } // namespace
