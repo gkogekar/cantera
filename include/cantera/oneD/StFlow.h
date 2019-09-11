@@ -190,7 +190,7 @@ public:
 	}
 
 	void evalCatalystBoundary(doublereal* x, doublereal* rsd,
-		integer* diag, doublereal rdt);
+		integer* diag, doublereal rdt, size_t j);
 
     //! Return the type of flow domain being represented, either "Free Flame" or
     //! "Axisymmetric Stagnation".
@@ -498,10 +498,16 @@ protected:
 	SurfPhase* m_sphase;
 	size_t m_surfindex, m_snsp, m_first;
 	vector_fp m_work, m_sdot;
-	vector_fp m_cov;
+	vector_fp m_cov, m_cov1;
 	vector_fp rsd_surf;
 	vector_fp prevSoln_surf;
 	doublereal m_area2Vol, m_Tsurf = 0;
+
+    //Input variables
+    doublereal m_eps = 0.1;   //Emmissivity of the catalyst
+    double m_rhoCp = 3.007*1e6;    // Rho*Cp for the catalyst Rh
+    //doublereal m_rhoCp = 1.651 * 1e6;    // Rho*Cp for the catalyst Pt
+    doublereal m_heatTranCoeff = 50;		//Heat transfer coefficient
 
 public:
     //! Location of the point where temperature is fixed

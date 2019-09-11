@@ -63,6 +63,7 @@ StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points, InterfaceKinetics* 
 		m_work.resize(m_snsp, 0.0);
 		m_sdot.resize(m_snsp + m_nsp, 0.0);
 		m_cov.resize(m_snsp, 0.0);
+        m_cov1.resize(m_snsp, 0.0);
 		m_do_surf = surfFlag;
 		ind_catalyst = catIndex;
 	}
@@ -180,14 +181,15 @@ void StFlow::setTransport(Transport& trans)
 
 void StFlow::_getInitialSoln(double* x)
 {
-	m_area2Vol = 1e4 / 2; //Hard-coded for now
+	m_area2Vol = 1e2 / 2; //Hard-coded for now
 	for (size_t j = 0; j < m_points; j++) {
         T(x,j) = m_thermo->temperature();
         m_thermo->getMassFractions(&Y(x, 0, j));
     }
 	//Hard-coded for now
 	//m_cov[0] = 0.5;
-	m_cov[m_snsp - 1] = 1.0;
+	m_cov[m_snsp - 1] = 0.5;
+    m_cov1[m_snsp - 1] = 0.75;
 }
 
 void StFlow::setGas(const doublereal* x, size_t j)
@@ -425,8 +427,8 @@ void StFlow::evalResidual(double* x, double* rsd, int* diag,
             evalRightBoundary(x, rsd, diag, rdt);
             // set residual of poisson's equ to zero
             rsd[index(c_offset_E, j)] = x[index(c_offset_E, j)];
-		} else if (j == ind_catalyst && m_type == cCatalysisAxisymmetricStagnationFlow) {
-			evalCatalystBoundary(x, rsd, diag, rdt);
+		} else if ((j == ind_catalyst || j == ind_catalyst + 1) && m_type == cCatalysisAxisymmetricStagnationFlow) {
+            evalCatalystBoundary(x, rsd, diag, rdt, j);
 			// set residual of poisson's equ to zero
 			rsd[index(c_offset_E, j)] = x[index(c_offset_E, j)];
 		} else { // interior points
@@ -1020,24 +1022,35 @@ void StFlow::evalContinuity(size_t j, double* x, double* rsd, int* diag, double 
     }
 }
 
-void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag, doublereal rdt)
+void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag, doublereal rdt, size_t j)
 {
-	if (m_do_surf == 1)
+    //writelog("\n Inside evalCatalystBoundary \n");
+    if (m_do_surf == 1)
 	{
 		//Equilibrate coverages for the first time-step
 		if (m_first == 0)
 		{
 			//Get coverages from the initial gas phase solution
 			setGas(x, ind_catalyst);
-			m_sphase->setTemperature(T(x, ind_catalyst));
+            m_sphase->setTemperature(T(x, ind_catalyst));
 			m_sphase->setCoverages(m_cov.data());
 			m_surfkin->advanceCoverages(1);
 			m_sphase->getCoverages(m_cov.data());
 			m_first++;
+            //size_t j = ind_catalyst;
 		}
+        if(m_first == 1)
+        {
+            //Get coverages from the initial gas phase solution
+            setGas(x, ind_catalyst + 1);
+            m_sphase->setTemperature(T(x, ind_catalyst + 1));
+            m_sphase->setCoverages(m_cov1.data());
+            m_surfkin->advanceCoverages(1);
+            m_sphase->getCoverages(m_cov1.data());
+            m_first++;
+            //size_t j = ind_catalyst + 1;
+        }
 	}
-
-	size_t j = ind_catalyst;
 
 	//algebraic constraint
 	diag[index(c_offset_U, j)] = 0;
@@ -1073,19 +1086,34 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 
 	vector_fp xMole(m_nsp);
 	m_thermo->getMoleFractions(&xMole[0]);
-
+    //writelog("\n Inside evalCatalystBoundary 1\n");
 	//Save current mole fractions of the gas phase
 	if (m_do_surf == 1)
 	{
-		m_sphase->setTemperature(m_Tsurf);
-		m_sphase->getCoverages(m_cov.data());
-		m_surfkin->getNetProductionRates(m_sdot.data());
+        if (j == ind_catalyst)
+        {
+            m_sphase->setTemperature(m_Tsurf);
+            m_sphase->getCoverages(m_cov.data());
+            m_surfkin->getNetProductionRates(m_sdot.data());
 
-		//Psuedo state equation solver for surface temperature and coverages
-		m_surfkin->advanceCoverages(1e-8);
-		m_sphase->getCoverages(m_cov.data());				// m_cov has been updated to new coverages
-		m_Tsurf = m_sphase->temperature();					// m_Tsurf has been updated to new temperature
-		m_surfkin->getNetProductionRates(m_sdot.data());	// Now sdot has been updated 		
+            //Psuedo state equation solver for surface temperature and coverages
+            m_surfkin->advanceCoverages(1e-8);
+            m_sphase->getCoverages(m_cov.data());				// m_cov has been updated to new coverages
+            m_Tsurf = m_sphase->temperature();					// m_Tsurf has been updated to new temperature
+            m_surfkin->getNetProductionRates(m_sdot.data());	// Now sdot has been updated 
+        }
+        else if (j == ind_catalyst +1) {
+            //writelog("\n Inside evalCatalystBoundary 2\n");
+            m_sphase->setTemperature(m_Tsurf);
+            m_sphase->getCoverages(m_cov1.data());
+            m_surfkin->getNetProductionRates(m_sdot.data());
+
+            //Psuedo state equation solver for surface temperature and coverages
+            m_surfkin->advanceCoverages(1e-8);
+            m_sphase->getCoverages(m_cov1.data());				// m_cov has been updated to new coverages
+            m_Tsurf = m_sphase->temperature();					// m_Tsurf has been updated to new temperature
+            m_surfkin->getNetProductionRates(m_sdot.data());	// Now sdot has been updated 
+        }
 	}
 
 	//-------------------------------------------------
@@ -1100,8 +1128,7 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 	for (size_t k = 0; k < m_nsp; k++) {
 		sum1 += m_sdot[k] * m_wt[k];
 	}
-
-	for (size_t k = 0; k < m_nsp; k++) {
+    for (size_t k = 0; k < m_nsp; k++) {
 		double convec = rho_u(x, j)*dYdz(x, k, j);
 		double diffus = 2.0*(m_flux(k, j) - m_flux(k, j - 1))
 			/ (z(j + 1) - z(j - 1));
@@ -1161,7 +1188,13 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 			- divHeatFlux(x, j) - sum - sum2;
 		rsd[index(c_offset_T, j)] /= (m_rho[j] * m_cp[j]);
 		rsd[index(c_offset_T, j)] -= rdt*(T(x, j) - T_prev(j));
-		//Radiation is ignored
+		rsd[index(c_offset_T, j)] -= (m_qdotRadiation[j] / (m_rho[j] * m_cp[j]));
+        //Radiation from the metal surface
+        //calculation of the two boundary values
+        double boundary_Rad_left = m_epsilon_left * StefanBoltz * pow(T(x, 0), 4);
+        double boundary_Rad_right = m_epsilon_right * StefanBoltz * pow(T(x, m_points - 1), 4);
+        double m_qdotSurfRadiation = 2* m_eps* StefanBoltz * (pow(T(x, j), 4)) - boundary_Rad_left - boundary_Rad_right;
+        rsd[index(c_offset_T, j)] -= (m_qdotSurfRadiation / m_rhoCp);
 		diag[index(c_offset_T, j)] = 1;
 	}
 	else {
@@ -1172,9 +1205,8 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 
     //Print coverages
     for (size_t k = 0; k < m_snsp; k++) {
-        //writelog("\n {} = {} ", m_sphase->speciesName(k), m_cov[k]);
+        //writelog("\n {} = {} ", m_sphase->speciesName(k), m_cov[k], m_cov1[k]);
     }
-    //writelog("\n");
-	//showSolution(x);
+    //showSolution(x);
 }
 } // namespace
