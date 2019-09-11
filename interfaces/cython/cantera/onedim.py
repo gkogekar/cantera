@@ -12,7 +12,7 @@ class FlameBase(Sim1D):
     """ Base class for flames with a single flow domain """
     __slots__ = ('gas',)
 
-    def __init__(self, domains, gas, grid=None, surface=None, catIndex=None, surfFlag = None):
+    def __init__(self, domains, gas, grid=None, surface=None, catIndex=None, surfFlag = None, surfEnergy = None):
         """
         :param gas:
             object to use to evaluate all gas properties and reaction rates
@@ -1050,7 +1050,7 @@ class CounterflowDiffusionFlameCatalysis(FlameBase):
     """ A counterflow diffusion flame with catalytic screen placed in between the air and fuel inlets """
     __slots__ = ('fuel_inlet', 'flame', 'surface', 'oxidizer_inlet')
 
-    def __init__(self, gas, grid=None, width=None, surface=None, catIndex=0, surfFlag = 0):
+    def __init__(self, gas, grid=None, width=None, surface=None, catIndex=0, surfFlag = 0, surfEnergy = 0):
         """
         :param gas:
             `Solution` (using the IdealGas thermodynamic model) used to
@@ -1076,7 +1076,7 @@ class CounterflowDiffusionFlameCatalysis(FlameBase):
         self.oxidizer_inlet = Inlet1D(name='oxidizer_inlet', phase=gas)
         self.oxidizer_inlet.T = gas.T
 
-        self.flame = IdealGasFlow(gas, surface, name='flame', catIndex = catIndex, surfFlag = surfFlag)
+        self.flame = IdealGasFlow(gas, surface, name='flame', catIndex = catIndex, surfFlag = surfFlag, surfEnergy = surfEnergy)
         self.flame.set_catalysisaxisymmetric_flow()
 
         if width is not None:
@@ -1090,7 +1090,7 @@ class CounterflowDiffusionFlameCatalysis(FlameBase):
             self.surface.set_kinetics(surface)
             self.surface.T = surface.T
 
-        super().__init__((self.fuel_inlet, self.flame, self.oxidizer_inlet), gas, grid, self.surface, catIndex, surfFlag)
+        super().__init__((self.fuel_inlet, self.flame, self.oxidizer_inlet), gas, grid, self.surface, catIndex, surfFlag, surfEnergy)
 		
 
     def set_initial_guess(self):

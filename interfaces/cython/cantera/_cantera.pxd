@@ -710,7 +710,7 @@ cdef extern from "cantera/oneD/Inlet1D.h":
 
 cdef extern from "cantera/oneD/StFlow.h":
     cdef cppclass CxxStFlow "Cantera::StFlow":
-        CxxStFlow(CxxIdealGasPhase*, int, int, CxxInterfaceKinetics*, int, int, int)
+        CxxStFlow(CxxIdealGasPhase*, int, int, CxxInterfaceKinetics*, int, int, int, int)
         void setKinetics(CxxKinetics&) except +translate_exception
         void setTransport(CxxTransport&, cbool) except +translate_exception
         void setTransport(CxxTransport&) except +translate_exception
@@ -732,6 +732,7 @@ cdef extern from "cantera/oneD/StFlow.h":
         void setCatScreenLocation(int)
         int catIndex
         int surfFlag
+        int surfEnergy
 
 
 cdef extern from "cantera/oneD/IonFlow.h":

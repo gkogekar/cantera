@@ -544,7 +544,7 @@ cdef class IdealGasFlow(_FlowBase):
     """
     def __cinit__(self, _SolutionBase thermo, _SolutionBase kin, *args, **kwargs):
         gas = getIdealGasPhase(thermo)
-        self.flow = new CxxStFlow(gas, thermo.n_species, 2, <CxxInterfaceKinetics*>kin.kinetics, 0, kwargs['catIndex'], kwargs['surfFlag'])
+        self.flow = new CxxStFlow(gas, thermo.n_species, 2, <CxxInterfaceKinetics*>kin.kinetics, 0, kwargs['catIndex'], kwargs['surfFlag'], kwargs['surfEnergy'])
 		
 cdef class IonFlow(_FlowBase):
     """

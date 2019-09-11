@@ -49,7 +49,7 @@ public:
     //! @param nsp Number of species.
     //! @param points Initial number of grid points
 
-	StFlow(IdealGasPhase* ph = 0, size_t nsp = 1, size_t points = 1, InterfaceKinetics* kinSurf = 0, size_t surfnsp = 0, size_t catIndex = 0, size_t surfFlag = 0);
+	StFlow(IdealGasPhase* ph = 0, size_t nsp = 1, size_t points = 1, InterfaceKinetics* kinSurf = 0, size_t surfnsp = 0, size_t catIndex = 0, size_t surfFlag = 0, size_t surfEnergy = 0);
 
     //! @name Problem Specification
     //! @{
@@ -180,7 +180,7 @@ public:
         m_dovisc = true;
     }
 
-	size_t ind_catalyst;
+	size_t ind_catalyst, m_surfEnergy_enable;
 
 	//! Set flow configuration for axisymmetric counterflow with catalytic screen
 	void setCatalysisAxisymmetricFlow() {
@@ -492,7 +492,7 @@ protected:
 
 	//Additional parameters needed for surface phase 
 	bool m_catSurface = false;
-	doublereal m_surfTemp = 1000; // Temperature of the catalytic screen if the energy equation is off.
+	doublereal m_surfTemp = 1200; // Temperature of the catalytic screen if the energy equation is off.
 	size_t m_do_surf = 0;
 	InterfaceKinetics* m_surfkin;
 	SurfPhase* m_sphase;

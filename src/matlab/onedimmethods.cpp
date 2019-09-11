@@ -22,8 +22,8 @@ void onedimmethods(int nlhs, mxArray* plhs[],
     int dom;
     dom = getInt(prhs[1]);
     int idom, icomp, localPoint;
-    if (job < 10) {
-		int ph, kin, tr, itype, iSurf, isurfkin, surfFlag, catIndex;
+    if (job < 11) {
+		int ph, kin, tr, itype, iSurf, isurfkin, surfFlag, catIndex, surfEnergy;
         size_t sz, nd;
 
         switch (job) {
@@ -39,7 +39,8 @@ void onedimmethods(int nlhs, mxArray* plhs[],
 			isurfkin = getInt(prhs[8]);
 			catIndex = getInt(prhs[9]);
 			surfFlag = getInt(prhs[10]);
-			indx = stflow_new(ph, kin, tr, itype, iSurf, isurfkin, catIndex, surfFlag);
+            surfEnergy = getInt(prhs[11]);
+			indx = stflow_new(ph, kin, tr, itype, iSurf, isurfkin, catIndex, surfFlag, surfEnergy);
             break;
         case 2:
             // construct a new Inlet1D instance

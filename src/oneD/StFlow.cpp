@@ -13,7 +13,7 @@ using namespace std;
 namespace Cantera
 {
 
-StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points, InterfaceKinetics* kinSurf, size_t surfnsp, size_t catIndex, size_t surfFlag) :
+StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points, InterfaceKinetics* kinSurf, size_t surfnsp, size_t catIndex, size_t surfFlag, size_t surfEnergy) :
     Domain1D(nsp+c_offset_Y, points),
     m_press(-1.0),
     m_nsp(nsp),
@@ -66,6 +66,7 @@ StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points, InterfaceKinetics* 
         m_cov1.resize(m_snsp, 0.0);
 		m_do_surf = surfFlag;
 		ind_catalyst = catIndex;
+        m_surfEnergy_enable = surfEnergy;
 	}
 
     // make a local copy of the species molecular weight vector
@@ -81,7 +82,6 @@ StFlow::StFlow(IdealGasPhase* ph, size_t nsp, size_t points, InterfaceKinetics* 
 
     // but turn off the energy equation at all points
     m_do_energy.resize(m_points,false);
-
     m_diff.resize(m_nsp*m_points);
     m_multidiff.resize(m_nsp*m_nsp*m_points);
     m_flux.resize(m_nsp,m_points);
@@ -1024,7 +1024,7 @@ void StFlow::evalContinuity(size_t j, double* x, double* rsd, int* diag, double 
 
 void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag, doublereal rdt, size_t j)
 {
-    //writelog("\n Inside evalCatalystBoundary \n");
+    //writelog("\n energy = {} ", m_do_energy[j]); 
     if (m_do_surf == 1)
 	{
 		//Equilibrate coverages for the first time-step
@@ -1077,9 +1077,9 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 	double qRad = 0, qConv = 0, qSurf = 0;
 
 	doublereal Tgas = T(x, j);
-	m_Tsurf = Tgas;
-
-	//Save enthalpies of the gas phase at gas temperature in an array m_hk_g
+    m_Tsurf = m_surfTemp;
+    
+    //Save enthalpies of the gas phase at gas temperature in an array m_hk_g
 	m_thermo->setTemperature(Tgas);
 	setGas(x, j);
 	const vector_fp& m_hk_g = m_thermo->enthalpy_RT_ref();
@@ -1100,6 +1100,9 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
             m_surfkin->advanceCoverages(1e-8);
             m_sphase->getCoverages(m_cov.data());				// m_cov has been updated to new coverages
             m_Tsurf = m_sphase->temperature();					// m_Tsurf has been updated to new temperature
+            if (m_do_energy[j]) {
+                m_Tsurf = m_surfTemp;
+            }
             m_surfkin->getNetProductionRates(m_sdot.data());	// Now sdot has been updated 
         }
         else if (j == ind_catalyst +1) {
@@ -1112,6 +1115,9 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
             m_surfkin->advanceCoverages(1e-8);
             m_sphase->getCoverages(m_cov1.data());				// m_cov has been updated to new coverages
             m_Tsurf = m_sphase->temperature();					// m_Tsurf has been updated to new temperature
+            if (m_do_energy[j]) {
+                m_Tsurf = m_surfTemp;
+            }
             m_surfkin->getNetProductionRates(m_sdot.data());	// Now sdot has been updated 
         }
 	}
@@ -1160,8 +1166,8 @@ void StFlow::evalCatalystBoundary(doublereal* x, doublereal* rsd, integer* diag,
 	//      - sum_k(\omega_k h_k_ref)
 	//      - sum_k(J_k c_p_k / M_k) dT/dz
 	//-----------------------------------------------
-	m_do_energy[j] = 1;
-	if (m_do_energy[j]) {
+    m_do_energy[j] = m_surfEnergy_enable;
+    if (m_do_energy[j]) {
 		setGas(x, j);
 		// heat release term
 		const vector_fp& h_RT = m_thermo->enthalpy_RT_ref();
