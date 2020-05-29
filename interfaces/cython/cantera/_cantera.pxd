@@ -745,10 +745,9 @@ cdef extern from "cantera/oneD/Inlet1D.h":
         void setKineticsMgr(CxxInterfaceKinetics*) except +translate_exception
         void enableCoverageEquations(cbool) except +translate_exception
 
-
-cdef extern from "cantera/oneD/StFlow.h":
-    cdef cppclass CxxStFlow "Cantera::StFlow":
-        CxxStFlow(CxxIdealGasPhase*, int, int)
+cdef extern from "cantera/oneD/FlowBase1D.h":
+    cdef cppclass CxxFlowBase1D "Cantera::FlowBase1D" (CxxDomain1D):
+        CxxFlowBase1D(CxxIdealGasPhase*, int, int)
         void setKinetics(CxxKinetics&) except +translate_exception
         void setTransport(CxxTransport&, cbool) except +translate_exception
         void setTransport(CxxTransport&) except +translate_exception
@@ -770,9 +769,17 @@ cdef extern from "cantera/oneD/StFlow.h":
         void setAxisymmetricFlow()
         string flowType()
 
+cdef extern from "cantera/oneD/StFlow.h":
+    cdef cppclass CxxStFlow "Cantera::StFlow" (CxxFlowBase1D):
+        CxxStFlow(CxxIdealGasPhase*, int, int)
+        void solveEnergyEqn()
+        void fixTemperature()
+        void setFreeFlow()
+        void setAxisymmetricFlow()
+        string flowType()
 
 cdef extern from "cantera/oneD/IonFlow.h":
-    cdef cppclass CxxIonFlow "Cantera::IonFlow":
+    cdef cppclass CxxIonFlow "Cantera::IonFlow" (CxxStFlow):
         CxxIonFlow(CxxIdealGasPhase*, int, int)
         void setSolvingStage(int)
         void solveElectricField()
@@ -1126,7 +1133,7 @@ cdef class ReactingSurface1D(Boundary1D):
     cdef CxxReactingSurf1D* surf
 
 cdef class _FlowBase(Domain1D):
-    cdef CxxStFlow* flow
+    cdef CxxFlowBase1D* flow
 
 cdef class IdealGasFlow(_FlowBase):
     pass

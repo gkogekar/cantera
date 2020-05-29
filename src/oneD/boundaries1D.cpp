@@ -6,7 +6,7 @@
 #include "cantera/oneD/Inlet1D.h"
 #include "cantera/oneD/OneDim.h"
 #include "cantera/base/ctml.h"
-#include "cantera/oneD/StFlow.h"
+#include "cantera/oneD/FlowBase1D.h"
 
 using namespace std;
 
@@ -43,7 +43,7 @@ void Bdry1D::_init(size_t n)
     if (m_index > 0) {
         Domain1D& r = container().domain(m_index-1);
         if (!r.isConnector()) { // flow domain
-            m_flow_left = (StFlow*)&r;
+            m_flow_left = (FlowBase1D*)&r;
             m_left_nv = m_flow_left->nComponents();
             m_left_points = m_flow_left->nPoints();
             m_left_loc = container().start(m_index-1);
@@ -60,7 +60,7 @@ void Bdry1D::_init(size_t n)
     if (m_index + 1 < container().nDomains()) {
         Domain1D& r = container().domain(m_index+1);
         if (!r.isConnector()) { // flow domain
-            m_flow_right = (StFlow*)&r;
+            m_flow_right = (FlowBase1D*)&r;
             m_right_nv = m_flow_right->nComponents();
             m_right_loc = container().start(m_index+1);
             m_right_nsp = m_right_nv - c_offset_Y;

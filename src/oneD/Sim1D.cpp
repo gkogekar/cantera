@@ -8,6 +8,7 @@
 #include "cantera/oneD/Sim1D.h"
 #include "cantera/oneD/MultiJac.h"
 #include "cantera/oneD/StFlow.h"
+#include "cantera/oneD/FlowBase1D.h"
 #include "cantera/oneD/MultiNewton.h"
 #include "cantera/numerics/funcs.h"
 #include "cantera/base/xml.h"
@@ -441,7 +442,7 @@ int Sim1D::setFixedTemperature(double t)
 
         // loop over points in the current grid to determine where new point is
         // needed.
-        StFlow* d_free = dynamic_cast<StFlow*>(&domain(n));
+		FlowBase1D* d_free = dynamic_cast<FlowBase1D*>(&domain(n));
         size_t npnow = d.nPoints();
         size_t nstart = znew.size();
         if (d_free && d_free->domainType() == cFreeFlow) {
@@ -516,7 +517,7 @@ double Sim1D::fixedTemperature()
 {
     double t_fixed = std::numeric_limits<double>::quiet_NaN();
     for (size_t n = 0; n < nDomains(); n++) {
-        StFlow* d = dynamic_cast<StFlow*>(&domain(n));
+		FlowBase1D* d = dynamic_cast<FlowBase1D*>(&domain(n));
         if (d && d->domainType() == cFreeFlow && d->m_tfixed > 0) {
             t_fixed = d->m_tfixed;
             break;
@@ -529,7 +530,7 @@ double Sim1D::fixedTemperatureLocation()
 {
     double z_fixed = std::numeric_limits<double>::quiet_NaN();
     for (size_t n = 0; n < nDomains(); n++) {
-        StFlow* d = dynamic_cast<StFlow*>(&domain(n));
+		FlowBase1D* d = dynamic_cast<FlowBase1D*>(&domain(n));
         if (d && d->domainType() == cFreeFlow && d->m_tfixed > 0) {
             z_fixed = d->m_zfixed;
             break;

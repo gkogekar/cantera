@@ -14,6 +14,7 @@
 #include "oneD/Sim1D.h"
 #include "oneD/Domain1D.h"
 #include "oneD/Inlet1D.h"
+#include "oneD/FlowBase1D.h"
 #include "oneD/StFlow.h"
 
 #endif

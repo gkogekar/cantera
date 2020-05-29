@@ -34,22 +34,23 @@ void Domain1D::resize(size_t nv, size_t np)
 {
     // if the number of components is being changed, then a
     // new grid refiner is required.
-    if (nv != m_nv || !m_refiner) {
+	if (nv != m_nv || !m_refiner) {
         m_nv = nv;
         m_refiner.reset(new Refiner(*this));
     }
-    m_nv = nv;
-    m_name.resize(m_nv,"");
-    m_max.resize(m_nv, 0.0);
-    m_min.resize(m_nv, 0.0);
-    // Default error tolerances for all domains
+	m_nv = nv;
+	m_name.resize(m_nv,"");
+	m_max.resize(m_nv, 0.0);
+	m_min.resize(m_nv, 0.0);
+	
+	// Default error tolerances for all domains
     m_rtol_ss.resize(m_nv, 1.0e-4);
-    m_atol_ss.resize(m_nv, 1.0e-9);
-    m_rtol_ts.resize(m_nv, 1.0e-4);
-    m_atol_ts.resize(m_nv, 1.0e-11);
-    m_points = np;
-    m_z.resize(np, 0.0);
-    m_slast.resize(m_nv * m_points, 0.0);
+	m_atol_ss.resize(m_nv, 1.0e-9);
+	m_rtol_ts.resize(m_nv, 1.0e-4);
+	m_atol_ts.resize(m_nv, 1.0e-11);
+	m_points = np;
+	m_z.resize(np, 0.0);
+	m_slast.resize(m_nv * m_points, 0.0);
     locate();
 }
 
@@ -183,7 +184,7 @@ void Domain1D::locate()
 
 void Domain1D::setupGrid(size_t n, const doublereal* z)
 {
-    if (n > 1) {
+	if (n > 1) {
         resize(m_nv, n);
         for (size_t j = 0; j < m_points; j++) {
             m_z[j] = z[j];

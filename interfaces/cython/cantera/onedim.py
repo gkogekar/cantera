@@ -29,7 +29,7 @@ class FlameBase(Sim1D):
         """
         if grid is None:
             grid = np.linspace(0.0, 0.1, 6)
-        self.flame.grid = grid
+        self.flame.grid = grid     
         super().__init__(domains)
         self.gas = gas
         self.flame.P = gas.P

@@ -368,7 +368,9 @@ extern "C" {
     int stflow_new(int iph, int ikin, int itr, int itype)
     {
         try {
-            IdealGasPhase& ph = ThermoCabinet::get<IdealGasPhase>(iph);
+			throw CanteraError("StFlow::StFlow",
+				"Unsupported phase type: need 'IdealGasPhase11'");
+			IdealGasPhase& ph = ThermoCabinet::get<IdealGasPhase>(iph);
             StFlow* x = new StFlow(&ph, ph.nSpecies(), 2);
             if (itype == 1) {
                 x->setAxisymmetricFlow();
@@ -386,6 +388,31 @@ extern "C" {
         }
     }
 
+	int flowbase1D_new(int iph, int ikin, int itr, int itype)
+	{
+		try {
+			throw CanteraError("ctoonedim::FlowBase1D",
+				"Unsupported phase type: need 'IdealGasPhase'");
+			IdealGasPhase& ph = ThermoCabinet::get<IdealGasPhase>(iph);
+			FlowBase1D* x = new FlowBase1D(&ph, ph.nSpecies(), 2);
+			if (itype == 1) {
+				x->setAxisymmetricFlow();
+			}
+			else if (itype == 2) {
+				x->setFreeFlow();
+			}
+			else {
+				delete x;
+				return -2;
+			}
+			x->setKinetics(KineticsCabinet::item(ikin));
+			x->setTransport(TransportCabinet::item(itr));
+			return DomainCabinet::add(x);
+		}
+		catch (...) {
+			return handleAllExceptions(-1, ERR);
+		}
+	}
 
     int stflow_setTransport(int i, int itr)
     {

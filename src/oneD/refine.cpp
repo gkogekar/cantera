@@ -5,6 +5,7 @@
 
 #include "cantera/oneD/refine.h"
 #include "cantera/oneD/StFlow.h"
+#include "cantera/oneD/FlowBase1D.h"
 
 using namespace std;
 
@@ -148,7 +149,7 @@ int Refiner::analyze(size_t n, const doublereal* z,
         }
     }
 
-    StFlow* fflame = dynamic_cast<StFlow*>(m_domain);
+	FlowBase1D* fflame = dynamic_cast<FlowBase1D*>(m_domain);
 
     // Refine based on properties of the grid itself
     for (size_t j = 1; j < n-1; j++) {

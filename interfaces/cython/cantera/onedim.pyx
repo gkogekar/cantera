@@ -512,14 +512,14 @@ cdef class _FlowBase(Domain1D):
         point with a fixed temperature as the condition to determine the inlet
         mass flux.
         """
-        self.flow.setFreeFlow()
+        (self.flow).setFreeFlow()
 
     def set_axisymmetric_flow(self):
         """
         Set flow configuration for axisymmetric counterflow or burner-stabilized
         flames, using specified inlet mass fluxes.
         """
-        self.flow.setAxisymmetricFlow()
+        (self.flow).setAxisymmetricFlow()
 
     property flow_type:
         """
@@ -527,14 +527,12 @@ cdef class _FlowBase(Domain1D):
         "Axisymmetric Stagnation".
         """
         def __get__(self):
-            return pystr(self.flow.flowType())
-
+            return pystr((self.flow).flowType())
 
 cdef CxxIdealGasPhase* getIdealGasPhase(ThermoPhase phase) except *:
     if pystr(phase.thermo.type()) != "IdealGas":
         raise TypeError('ThermoPhase object is not an IdealGasPhase')
     return <CxxIdealGasPhase*>(phase.thermo)
-
 
 cdef class IdealGasFlow(_FlowBase):
     """
@@ -568,7 +566,7 @@ cdef class IdealGasFlow(_FlowBase):
     """
     def __cinit__(self, _SolutionBase thermo, *args, **kwargs):
         gas = getIdealGasPhase(thermo)
-        self.flow = new CxxStFlow(gas, thermo.n_species, 2)
+        self.flow = <CxxFlowBase1D*>new CxxStFlow(gas, thermo.n_species, 2)
 
 
 cdef class IonFlow(_FlowBase):
@@ -579,7 +577,7 @@ cdef class IonFlow(_FlowBase):
     """
     def __cinit__(self, _SolutionBase thermo, *args, **kwargs):
         gas = getIdealGasPhase(thermo)
-        self.flow = <CxxStFlow*>(new CxxIonFlow(gas, thermo.n_species, 2))
+        self.flow = <CxxFlowBase1D*>(new CxxIonFlow(gas, thermo.n_species, 2))
 
     def set_solving_stage(self, stage):
         (<CxxIonFlow*>self.flow).setSolvingStage(stage)
