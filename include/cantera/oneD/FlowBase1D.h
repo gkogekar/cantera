@@ -19,12 +19,12 @@ namespace Cantera
 //------------------------------------------
 
 // Offsets of solution components in the solution array.
-static size_t c_offset_U = -1; // axial velocity
-static size_t c_offset_V = -1; // strain rate
-static size_t c_offset_T = -1; // temperature
-static size_t c_offset_L = -1; // (1/r)dP/dr
-static size_t c_offset_E = -1; // electric poisson's equation
-static size_t c_offset_Y = -1; // mass fractions
+static size_t c_offset_U = 0; // axial velocity
+static size_t c_offset_V = 1; // strain rate
+static size_t c_offset_T = 2; // temperature
+static size_t c_offset_L = 3; // (1/r)dP/dr
+static size_t c_offset_E = 4; // electric poisson's equation
+static size_t c_offset_Y = 5; // mass fractions
 static size_t c_offset_theta = -1; // surface fractions
 static size_t c_offset_P = -1; // pressure
 
@@ -57,7 +57,11 @@ public:
     //! @name Problem Specification
     //! @{
 
-    virtual void setupGrid(size_t n, const doublereal* z);
+	//virtual std::string componentName(size_t n) const;
+
+	//virtual size_t componentIndex(const std::string& name) const;
+
+	virtual void setupGrid(size_t n, const doublereal* z);
 
 	//Thermodynamics and kinetics objects
     thermo_t& phase() {

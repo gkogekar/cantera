@@ -95,6 +95,12 @@ public:
         m_dovisc = dovisc;
     }
 
+	/*!
+	 *  Evaluate the residual function for axisymmetric stagnation flow.
+	 */
+	virtual void eval(size_t j, doublereal* x, doublereal* r,
+		integer* mask, doublereal rdt);
+
     //! Evaluate all residual components at the right boundary.
     virtual void evalRightBoundary(double* x, double* res, int* diag,
                                    double rdt);

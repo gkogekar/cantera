@@ -608,6 +608,35 @@ void StFlow::evalRightBoundary(double* x, double* rsd, int* diag, double rdt)
     }
 }
 
+void StFlow::eval(size_t jg, doublereal* xg,
+	doublereal* rg, integer* diagg, doublereal rdt)
+{
+	// if evaluating a Jacobian, and the global point is outside the domain of
+	// influence for this domain, then skip evaluating the residual
+	if (jg != npos && (jg + 1 < firstPoint() || jg > lastPoint() + 1)) {
+		return;
+	}
+
+	// start of local part of global arrays
+	doublereal* x = xg + loc();
+	doublereal* rsd = rg + loc();
+	integer* diag = diagg + loc();
+
+	size_t jmin, jmax;
+	if (jg == npos) { // evaluate all points
+		jmin = 0;
+		jmax = m_points - 1;
+	}
+	else { // evaluate points for Jacobian
+		size_t jpt = (jg == 0) ? 0 : jg - firstPoint();
+		jmin = std::max<size_t>(jpt, 1) - 1;
+		jmax = std::min(jpt + 1, m_points - 1);
+	}
+
+	updateProperties(jg, x, jmin, jmax);
+	evalResidual(x, rsd, diag, rdt, jmin, jmax);
+}
+
 void StFlow::evalContinuity(size_t j, double* x, double* rsd, int* diag, double rdt)
 {
     //algebraic constraint

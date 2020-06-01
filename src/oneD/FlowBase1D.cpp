@@ -14,6 +14,7 @@ namespace Cantera
 {
 
 FlowBase1D::FlowBase1D(ThermoPhase* ph, size_t nsp, size_t points) :
+	Domain1D(nsp + c_offset_Y, points),
     m_press(-1.0),
     m_nsp(nsp),
     m_thermo(0),
