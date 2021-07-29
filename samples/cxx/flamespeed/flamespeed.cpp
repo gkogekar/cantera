@@ -14,7 +14,7 @@
 #include "cantera/oneD/Sim1D.h"
 #include "cantera/oneD/Boundary1D.h"
 #include "cantera/oneD/StFlow.h"
-#include "cantera/thermo/IdealGasPhase.h"
+#include "cantera/thermo/ThermoPhase.h"
 #include "cantera/transport.h"
 #include "cantera/base/Solution.h"
 #include "cantera/base/stringUtils.h"
