@@ -58,6 +58,8 @@ namespace Cantera
  * The value and form of the activity concentration will affect reaction rate
  * constants involving species in this phase.
  *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
+ *
  *      <thermo model="IdealMolalSoln">
  *         <standardConc model="solvent_volume" />
  *         <solvent> H2O(l) </solvent>
@@ -108,7 +110,10 @@ public:
         return "IdealMolalSoln";
     }
 
-    //! @}
+    virtual bool isIdeal() const {
+        return true;
+    }
+
     //! @name  Molar Thermodynamic Properties of the Solution
     //! @{
 
@@ -178,7 +183,7 @@ public:
      */
     virtual doublereal cp_mole() const;
 
-    //@}
+    //! @}
     /** @name Mechanical Equation of State Properties
      *
      * In this equation of state implementation, the density is a function only
@@ -187,7 +192,7 @@ public:
      * which try to set the thermodynamic state by calling setDensity() will
      * cause an exception to be thrown.
      */
-    //@{
+    //! @{
 
 protected:
     /**
@@ -273,9 +278,9 @@ public:
      */
     virtual void getMolalityActivityCoefficients(doublereal* acMolality) const;
 
-    //@}
+    //! @}
     /// @name  Partial Molar Properties of the Solution
-    //@{
+    //! @{
 
     //!Get the species chemical potentials: Units: J/kmol.
     /*!
@@ -378,7 +383,7 @@ public:
      */
     virtual void getPartialMolarCp(doublereal* cpbar) const;
 
-    //@}
+    //! @}
 
     // -------------- Utilities -------------------------------
 
@@ -421,7 +426,6 @@ public:
      * @param smv Output vector of species molar volumes.
      */
     void getSpeciesMolarVolumes(double* smv) const;
-    //@}
 
 protected:
     //! Species molar volume \f$ m^3 kmol^{-1} \f$

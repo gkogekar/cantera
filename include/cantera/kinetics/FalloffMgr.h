@@ -1,5 +1,8 @@
 /**
  *  @file FalloffMgr.h
+ *
+ *  @deprecated  Deprecated in Cantera 2.6 and removed thereafter. Replaced by
+ *      FalloffRate objects managed by MultiRate evaluators.
  */
 
 // This file is part of Cantera. See License.txt in the top-level directory or
@@ -18,6 +21,9 @@ namespace Cantera
 /**
  *  A falloff manager that implements any set of falloff functions.
  *  @ingroup falloffGroup
+ *
+ *  @deprecated  Deprecated in Cantera 2.6 and removed thereafter. Replaced by
+ *      FalloffRate objects managed by MultiRate evaluators.
  */
 class FalloffMgr
 {
@@ -61,7 +67,7 @@ public:
         m_offset.push_back(m_worksize);
         m_worksize += f->workSize();
         m_falloff.push_back(f);
-        m_isfalloff.push_back(type == "falloff");
+        m_isfalloff.push_back(type == "falloff-legacy");
         m_indices[rxn] = m_falloff.size()-1;
     }
 

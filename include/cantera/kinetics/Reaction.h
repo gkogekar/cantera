@@ -12,23 +12,31 @@
 #include "cantera/kinetics/ReactionRate.h"
 #include "cantera/kinetics/RxnRates.h"
 #include "cantera/base/Units.h"
+#include "Custom.h"
 
 namespace Cantera
 {
 
 class Kinetics;
-class Falloff;
+class FalloffRate;
 class XML_Node;
 class ThirdBody;
 
+//! @defgroup reactionGroup Reactions and reaction rates
+
 //! Abstract base class which stores data about a reaction and its rate
 //! parameterization so that it can be added to a Kinetics object.
+//! @ingroup reactionGroup
 class Reaction
 {
 public:
     Reaction();
-    Reaction(const Composition& reactants,
-             const Composition& products);
+    Reaction(const Composition& reactants, const Composition& products,
+             shared_ptr<ReactionRate> rate={});
+
+    //! Construct a Reaction and it's corresponding ReactionRate based on AnyMap (YAML)
+    //! input.
+    Reaction(const AnyMap& node, const Kinetics& kin);
 
     //! @deprecated To be removed after Cantera 2.6.
     explicit Reaction(int type);
@@ -46,17 +54,30 @@ public:
     //! The chemical equation for this reaction
     std::string equation() const;
 
+    //! Set the reactants and products based on the reaction equation. If a Kinetics
+    //! object is provided, it is used to check that all reactants and products exist.
+    virtual void setEquation(const std::string& equation, const Kinetics* kin=0);
+
     //! The type of reaction
-    virtual std::string type() const = 0; // pure virtual function
+    virtual std::string type() const;
 
     //! Calculate the units of the rate constant. These are determined by the units
     //! of the standard concentration of the reactant species' phases and the phase
     //! where the reaction occurs. Sets the value of #rate_units.
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
 
+    //! Calculate the units of the rate constant. These are determined by the units
+    //! of the standard concentration of the reactant species' phases and the phase
+    //! where the reaction occurs. Sets the value of #rate_units.
+    UnitStack calculateRateCoeffUnits3(const Kinetics& kin);
+
     //! Ensure that the rate constant and other parameters for this reaction are
     //! valid.
     virtual void validate();
+
+    //! Perform validation checks that need access to a complete Kinetics objects, for
+    // example to retrieve information about reactant / product species.
+    virtual void validate(Kinetics& kin) {}
 
     //! Return the parameters such that an identical Reaction could be reconstructed
     //! using the newReaction() function. Behavior specific to derived classes is
@@ -83,7 +104,7 @@ public:
     //! each element in the reactants and products). Raises an exception if the
     //! reaction is not balanced. Used by checkSpecies.
     //! @param kin  Kinetics object
-    void checkBalance(const Kinetics& kin) const;
+    virtual void checkBalance(const Kinetics& kin) const;
 
     //! Verify that all species involved in the reaction are defined in the Kinetics
     //! object. The function returns true if all species are found, and raises an
@@ -137,14 +158,12 @@ public:
     Units rate_units;
 
     //! Get reaction rate pointer
-    shared_ptr<ReactionRateBase> rate() {
+    shared_ptr<ReactionRate> rate() {
         return m_rate;
     }
 
     //! Set reaction rate pointer
-    void setRate(shared_ptr<ReactionRateBase> rate) {
-        m_rate = rate;
-    }
+    void setRate(shared_ptr<ReactionRate> rate);
 
     //! Get pointer to third-body
     shared_ptr<ThirdBody> thirdBody() {
@@ -174,7 +193,7 @@ protected:
         undeclaredThirdBodies(const Kinetics& kin) const;
 
     //! Reaction rate used by generic reactions
-    shared_ptr<ReactionRateBase> m_rate;
+    shared_ptr<ReactionRate> m_rate;
 
     //! Relative efficiencies of third-body species in enhancing the reaction
     //! rate (if applicable)
@@ -189,15 +208,17 @@ class ElementaryReaction2 : public Reaction
 public:
     ElementaryReaction2();
     ElementaryReaction2(const Composition& reactants, const Composition products,
-                        const Arrhenius& rate);
+                        const Arrhenius2& rate);
+
     virtual void validate();
+    using Reaction::validate;
     virtual void getParameters(AnyMap& reactionNode) const;
 
     virtual std::string type() const {
         return "elementary-legacy";
     }
 
-    Arrhenius rate;
+    Arrhenius2 rate;
     bool allow_negative_pre_exponential_factor;
 };
 
@@ -222,6 +243,13 @@ public:
     //! The default third body efficiency for species not listed in
     //! #efficiencies.
     double default_efficiency;
+
+    //! Input explicitly specifies collision partner
+    bool specified_collision_partner;
+
+    //! Third body is used by law of mass action
+    //! (`true` for three-body reactions, `false` for falloff reactions)
+    bool mass_action;
 };
 
 
@@ -232,7 +260,7 @@ class ThreeBodyReaction2 : public ElementaryReaction2
 public:
     ThreeBodyReaction2();
     ThreeBodyReaction2(const Composition& reactants, const Composition& products,
-                       const Arrhenius& rate, const ThirdBody& tbody);
+                       const Arrhenius2& rate, const ThirdBody& tbody);
 
     virtual std::string type() const {
         return "three-body-legacy";
@@ -247,8 +275,6 @@ public:
     //! rate.
     ThirdBody third_body;
 
-    bool specified_collision_partner = false; //!< Input specifies collision partner
-
 protected:
     virtual std::pair<std::vector<std::string>, bool>
         undeclaredThirdBodies(const Kinetics& kin) const;
@@ -257,36 +283,38 @@ protected:
 
 //! A reaction that is first-order in [M] at low pressure, like a third-body
 //! reaction, but zeroth-order in [M] as pressure increases.
-class FalloffReaction : public Reaction
+class FalloffReaction2 : public Reaction
 {
 public:
-    FalloffReaction();
-    FalloffReaction(const Composition& reactants, const Composition& products,
-                    const Arrhenius& low_rate, const Arrhenius& high_rate,
-                    const ThirdBody& tbody);
+    FalloffReaction2();
+    FalloffReaction2(const Composition& reactants, const Composition& products,
+                     const Arrhenius2& low_rate, const Arrhenius2& high_rate,
+                     const ThirdBody& tbody);
 
     virtual std::string type() const {
-        return "falloff";
+        return "falloff-legacy";
     }
 
     virtual std::string reactantString() const;
     virtual std::string productString() const;
+
     virtual void validate();
+    using Reaction::validate;
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
     virtual void getParameters(AnyMap& reactionNode) const;
 
     //! The rate constant in the low-pressure limit
-    Arrhenius low_rate;
+    Arrhenius2 low_rate;
 
     //! The rate constant in the high-pressure limit
-    Arrhenius high_rate;
+    Arrhenius2 high_rate;
 
     //! Relative efficiencies of third-body species in enhancing the reaction rate
     ThirdBody third_body;
 
     //! Falloff function which determines how low_rate and high_rate are
     //! combined to determine the rate constant for the reaction.
-    shared_ptr<Falloff> falloff;
+    shared_ptr<FalloffRate> falloff;
 
     bool allow_negative_pre_exponential_factor;
 
@@ -301,19 +329,19 @@ protected:
 
 
 //! A reaction where the rate decreases as pressure increases due to collisional
-//! stabilization of a reaction intermediate. Like a FalloffReaction, except
+//! stabilization of a reaction intermediate. Like a FalloffReaction2, except
 //! that the forward rate constant is written as being proportional to the low-
 //! pressure rate constant.
-class ChemicallyActivatedReaction : public FalloffReaction
+class ChemicallyActivatedReaction2 : public FalloffReaction2
 {
 public:
-    ChemicallyActivatedReaction();
-    ChemicallyActivatedReaction(const Composition& reactants,
-        const Composition& products, const Arrhenius& low_rate,
-        const Arrhenius& high_rate, const ThirdBody& tbody);
+    ChemicallyActivatedReaction2();
+    ChemicallyActivatedReaction2(const Composition& reactants,
+        const Composition& products, const Arrhenius2& low_rate,
+        const Arrhenius2& high_rate, const ThirdBody& tbody);
 
     virtual std::string type() const {
-        return "chemically-activated";
+        return "chemically-activated-legacy";
     }
 
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
@@ -335,6 +363,7 @@ public:
     }
 
     virtual void validate();
+    using Reaction::validate;
     virtual void getParameters(AnyMap& reactionNode) const;
 
     Plog rate;
@@ -348,14 +377,14 @@ class ChebyshevReaction2 : public Reaction
 public:
     ChebyshevReaction2();
     ChebyshevReaction2(const Composition& reactants, const Composition& products,
-                       const Chebyshev& rate);
+                       const ChebyshevRate& rate);
     virtual void getParameters(AnyMap& reactionNode) const;
 
     virtual std::string type() const {
         return "Chebyshev-legacy";
     }
 
-    Chebyshev rate;
+    ChebyshevRate rate;
 };
 
 
@@ -381,9 +410,13 @@ class InterfaceReaction : public ElementaryReaction2
 public:
     InterfaceReaction();
     InterfaceReaction(const Composition& reactants, const Composition& products,
-                      const Arrhenius& rate, bool isStick=false);
+                      const Arrhenius2& rate, bool isStick=false);
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
     virtual void getParameters(AnyMap& reactionNode) const;
+    virtual void checkBalance(const Kinetics& kin) const;
+
+    virtual void validate(Kinetics& kin);
+    using Reaction::validate;
 
     virtual std::string type() const {
         return "interface";
@@ -417,7 +450,7 @@ class ElectrochemicalReaction : public InterfaceReaction
 public:
     ElectrochemicalReaction();
     ElectrochemicalReaction(const Composition& reactants,
-                            const Composition& products, const Arrhenius& rate);
+                            const Composition& products, const Arrhenius2& rate);
     virtual void getParameters(AnyMap& reactionNode) const;
 
     //! Forward value of the apparent Electrochemical transfer coefficient
@@ -427,40 +460,27 @@ public:
 };
 
 
-//! A reaction with rate parameters for Blowers-Masel approximation
-class BlowersMaselReaction: public Reaction
-{
-public:
-    BlowersMaselReaction();
-    BlowersMaselReaction(const Composition& reactants,
-                         const Composition& products, const BlowersMasel& rate);
-    virtual void getParameters(AnyMap& reactionNode) const;
-    virtual void validate();
-
-    virtual std::string type() const {
-        return "Blowers-Masel";
-    }
-
-    BlowersMasel rate;
-
-    bool allow_negative_pre_exponential_factor;
-};
-
-
 //! A reaction occurring on an interface (i.e. a SurfPhase or an EdgePhase)
 //! with the rate calculated with Blowers-Masel approximation.
-class BlowersMaselInterfaceReaction : public BlowersMaselReaction
+class BlowersMaselInterfaceReaction : public Reaction
 {
 public:
     BlowersMaselInterfaceReaction();
     BlowersMaselInterfaceReaction(const Composition& reactants, const Composition& products,
-                      const BlowersMasel& rate, bool isStick=false);
+                      const BMSurfaceArrhenius& rate, bool isStick=false);
     virtual void getParameters(AnyMap& reactionNode) const;
+    virtual void validate();
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void validate(Kinetics& kin);
 
     virtual std::string type() const {
         return "surface-Blowers-Masel";
     }
+
+    BMSurfaceArrhenius rate;
+
+    bool allow_negative_pre_exponential_factor;
+
     //! Adjustments to the Arrhenius rate expression dependent on surface
     //! species coverages. Three coverage parameters (a, E, m) are used for each
     //! species on which the rate depends. See SurfaceArrhenius for details on
@@ -483,27 +503,9 @@ public:
 };
 
 
-//! A reaction which follows mass-action kinetics with a modified Arrhenius
-//! reaction rate.
-class ElementaryReaction3 : public Reaction
-{
-public:
-    ElementaryReaction3();
-    ElementaryReaction3(const Composition& reactants, const Composition& products,
-                        const ArrheniusRate& rate);
-
-    ElementaryReaction3(const AnyMap& node, const Kinetics& kin);
-
-    virtual std::string type() const {
-        return "elementary";
-    }
-    virtual void getParameters(AnyMap& reactionNode) const;
-};
-
-
 //! A reaction with a non-reacting third body "M" that acts to add or remove
 //! energy from the reacting species
-class ThreeBodyReaction3 : public ElementaryReaction3
+class ThreeBodyReaction3 : public Reaction
 {
 public:
     ThreeBodyReaction3();
@@ -516,52 +518,57 @@ public:
         return "three-body";
     }
 
+    virtual void setEquation(const std::string& equation, const Kinetics* kin=0);
     bool detectEfficiencies();
-    virtual void calculateRateCoeffUnits(const Kinetics& kin);
     virtual void setParameters(const AnyMap& node, const Kinetics& kin);
     virtual void getParameters(AnyMap& reactionNode) const;
 
     virtual std::string reactantString() const;
     virtual std::string productString() const;
-
-    bool specified_collision_partner = false; //!< Input specifies collision partner
 };
 
 
-//! A pressure-dependent reaction parameterized by logarithmically interpolating
-//! between Arrhenius rate expressions at various pressures.
-class PlogReaction3 : public Reaction
+//! A reaction for two-temperature-plasma reaction rate
+class TwoTempPlasmaReaction: public Reaction
 {
 public:
-    PlogReaction3();
-    PlogReaction3(const Composition& reactants, const Composition& products,
-                  const PlogRate& rate);
+    TwoTempPlasmaReaction();
+    TwoTempPlasmaReaction(const Composition& reactants, const Composition& products,
+                  const TwoTempPlasmaRate& rate);
 
-    PlogReaction3(const AnyMap& node, const Kinetics& kin);
+    TwoTempPlasmaReaction(const AnyMap& node, const Kinetics& kin);
 
     virtual std::string type() const {
-        return "pressure-dependent-Arrhenius";
+        return "two-temperature-plasma";
     }
-    virtual void getParameters(AnyMap& reactionNode) const;
+
+    virtual void validate();
 };
 
 
-//! A pressure-dependent reaction parameterized by a bi-variate Chebyshev
-//! polynomial in temperature and pressure
-class ChebyshevReaction3 : public Reaction
+//! A falloff reaction that is first-order in [M] at low pressure, like a third-body
+//! reaction, but zeroth-order in [M] as pressure increases.
+//! In addition, the class supports chemically-activated reactions where the rate
+//! decreases as pressure increases due to collisional stabilization of a reaction
+//! intermediate; in this case, the forward rate constant is written as being
+//! proportional to the low-pressure rate constant.
+class FalloffReaction3 : public Reaction
 {
 public:
-    ChebyshevReaction3();
-    ChebyshevReaction3(const Composition& reactants, const Composition& products,
-                       const ChebyshevRate3& rate);
+    FalloffReaction3();
+    FalloffReaction3(const Composition& reactants, const Composition& products,
+                     const ReactionRate& rate, const ThirdBody& tbody);
 
-    ChebyshevReaction3(const AnyMap& node, const Kinetics& kin);
+    FalloffReaction3(const AnyMap& node, const Kinetics& kin);
 
-    virtual std::string type() const {
-        return "Chebyshev";
-    }
+    virtual std::string type() const;
 
+    virtual void setEquation(const std::string& equation, const Kinetics* kin);
+    virtual void setParameters(const AnyMap& node, const Kinetics& kin);
     virtual void getParameters(AnyMap& reactionNode) const;
+
+    virtual std::string reactantString() const;
+    virtual std::string productString() const;
 };
 
 
@@ -587,13 +594,13 @@ public:
 
 
 #ifdef CT_NO_LEGACY_REACTIONS_26
-typedef ElementaryReaction3 ElementaryReaction;
 typedef ThreeBodyReaction3 ThreeBodyReaction;
-typedef PlogReaction3 PlogReaction;
-typedef ChebyshevReaction3 ChebyshevReaction;
+typedef FalloffReaction3 FalloffReaction;
 #else
 typedef ElementaryReaction2 ElementaryReaction;
 typedef ThreeBodyReaction2 ThreeBodyReaction;
+typedef FalloffReaction2 FalloffReaction;
+typedef ChemicallyActivatedReaction2 ChemicallyActivatedReaction;
 typedef PlogReaction2 PlogReaction;
 typedef ChebyshevReaction2 ChebyshevReaction;
 #endif
@@ -629,8 +636,8 @@ std::vector<shared_ptr<Reaction>> getReactions(const AnyValue& items,
                                                Kinetics& kinetics);
 
 //! Parse reaction equation
-void parseReactionEquation(Reaction& R, const AnyValue& equation,
-                           const Kinetics& kin);
+void parseReactionEquation(Reaction& R, const std::string& equation,
+                           const AnyBase& reactionNode, const Kinetics* kin);
 
 // declarations of setup functions
 void setupReaction(Reaction& R, const XML_Node& rxn_node);
@@ -645,12 +652,13 @@ void setupThreeBodyReaction(ThreeBodyReaction2&, const XML_Node&);
 void setupThreeBodyReaction(ThreeBodyReaction2&, const AnyMap&,
                             const Kinetics&);
 
-void setupFalloffReaction(FalloffReaction&, const XML_Node&);
-//! @internal May be changed without notice in future versions
-void setupFalloffReaction(FalloffReaction&, const AnyMap&,
+void setupFalloffReaction(FalloffReaction2&, const XML_Node&);
+//! @deprecated Cantera 2.6 (replaced by setParameters)
+void setupFalloffReaction(FalloffReaction2&, const AnyMap&,
                           const Kinetics&);
 
-void setupChemicallyActivatedReaction(ChemicallyActivatedReaction&,
+//! @deprecated Cantera 2.6 (replaced by setParameters)
+void setupChemicallyActivatedReaction(ChemicallyActivatedReaction2&,
                                       const XML_Node&);
 
 void setupPlogReaction(PlogReaction2&, const XML_Node&);
@@ -674,11 +682,7 @@ void setupElectrochemicalReaction(ElectrochemicalReaction&,
                                   const AnyMap&, const Kinetics&);
 
 //! @internal May be changed without notice in future versions
-void setupBlowersMaselReaction(BlowersMaselReaction&,
-                               const AnyMap&, const Kinetics&);
-//! @internal May be changed without notice in future versions
 void setupBlowersMaselInterfaceReaction(BlowersMaselInterfaceReaction&,
                                         const AnyMap&, const Kinetics&);
 }
-
 #endif

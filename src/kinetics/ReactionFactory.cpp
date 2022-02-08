@@ -8,6 +8,7 @@
 #include "cantera/thermo/ThermoPhase.h"
 #include "cantera/kinetics/Reaction.h"
 #include "cantera/kinetics/ReactionFactory.h"
+#include "cantera/kinetics/ReactionRateFactory.h"
 #include "cantera/kinetics/Kinetics.h"
 #include "cantera/base/ctml.h"
 #include "cantera/base/AnyMap.h"
@@ -22,15 +23,17 @@ std::mutex ReactionFactory::reaction_mutex;
 ReactionFactory::ReactionFactory()
 {
     // register elementary reactions
-    reg("elementary", [](const AnyMap& node, const Kinetics& kin) {
-        return new ElementaryReaction3(node, kin);
+    reg("reaction", [](const AnyMap& node, const Kinetics& kin) {
+        return new Reaction(node, kin);
     });
-    addAlias("elementary", "arrhenius");
-    addAlias("elementary", "");
+    addAlias("reaction", "elementary");
+    addAlias("reaction", "arrhenius");
+    addAlias("reaction", "Arrhenius");
+    addAlias("reaction", "");
 
     // register elementary reactions (old framework)
     reg("elementary-legacy", [](const AnyMap& node, const Kinetics& kin) {
-        ElementaryReaction* R = new ElementaryReaction2();
+        ElementaryReaction2* R = new ElementaryReaction2();
         if (!node.empty()) {
             setupElementaryReaction(*R, node, kin);
         }
@@ -46,7 +49,7 @@ ReactionFactory::ReactionFactory()
 
     // register three-body reactions (old framework)
     reg("three-body-legacy", [](const AnyMap& node, const Kinetics& kin) {
-        ThreeBodyReaction* R = new ThreeBodyReaction2();
+        ThreeBodyReaction2* R = new ThreeBodyReaction2();
         if (!node.empty()) {
             setupThreeBodyReaction(*R, node, kin);
         }
@@ -55,7 +58,13 @@ ReactionFactory::ReactionFactory()
 
     // register falloff reactions
     reg("falloff", [](const AnyMap& node, const Kinetics& kin) {
-        FalloffReaction* R = new FalloffReaction();
+        return new FalloffReaction3(node, kin);
+    });
+    addAlias("falloff", "chemically-activated");
+
+    // register falloff reactions (old framework)
+    reg("falloff-legacy", [](const AnyMap& node, const Kinetics& kin) {
+        FalloffReaction2* R = new FalloffReaction2();
         if (!node.empty()) {
             setupFalloffReaction(*R, node, kin);
         }
@@ -63,26 +72,23 @@ ReactionFactory::ReactionFactory()
     });
 
     // register falloff reactions
-    reg("chemically-activated", [](const AnyMap& node, const Kinetics& kin) {
-        FalloffReaction* R = new ChemicallyActivatedReaction();
+    reg("chemically-activated-legacy", [](const AnyMap& node, const Kinetics& kin) {
+        FalloffReaction2* R = new ChemicallyActivatedReaction2();
         if (!node.empty()) {
             setupFalloffReaction(*R, node, kin);
         }
         return R;
     });
-    addAlias("chemically-activated", "chemact");
-    addAlias("chemically-activated", "chemically_activated");
+    addAlias("chemically-activated-legacy", "chemact");
+    addAlias("chemically-activated-legacy", "chemically_activated");
 
-    // register pressure-dependent-Arrhenius reactions
-    reg("pressure-dependent-Arrhenius", [](const AnyMap& node, const Kinetics& kin) {
-        return new PlogReaction3(node, kin);
-    });
-    addAlias("pressure-dependent-Arrhenius", "plog");
-    addAlias("pressure-dependent-Arrhenius", "pdep_arrhenius");
+    addAlias("reaction", "pressure-dependent-Arrhenius");
+    addAlias("reaction", "plog");
+    addAlias("reaction", "pdep_arrhenius");
 
     // register pressure-dependent-Arrhenius reactions (old framework)
     reg("pressure-dependent-Arrhenius-legacy", [](const AnyMap& node, const Kinetics& kin) {
-        PlogReaction* R = new PlogReaction2();
+        PlogReaction2* R = new PlogReaction2();
         if (!node.empty()) {
             setupPlogReaction(*R, node, kin);
         }
@@ -90,12 +96,10 @@ ReactionFactory::ReactionFactory()
     });
 
     // register Chebyshev reactions
-    reg("Chebyshev", [](const AnyMap& node, const Kinetics& kin) {
-        return new ChebyshevReaction3(node, kin);
-    });
-    addAlias("Chebyshev", "chebyshev");
+    addAlias("reaction", "Chebyshev");
+    addAlias("reaction", "chebyshev");
     reg("Chebyshev-legacy", [](const AnyMap& node, const Kinetics& kin) {
-        ChebyshevReaction* R = new ChebyshevReaction2();
+        ChebyshevReaction2* R = new ChebyshevReaction2();
         if (!node.empty()) {
             setupChebyshevReaction(*R, node, kin);
         }
@@ -127,14 +131,12 @@ ReactionFactory::ReactionFactory()
         return R;
     });
 
-    // register Blowers Masel reactions
-    reg("Blowers-Masel", [](const AnyMap& node, const Kinetics& kin) {
-        BlowersMaselReaction* R = new BlowersMaselReaction();
-        if (!node.empty()) {
-            setupBlowersMaselReaction(*R, node, kin);
-        }
-        return R;
+    // register electron-temprature reactions
+    reg("two-temperature-plasma", [](const AnyMap& node, const Kinetics& kin) {
+        return new TwoTempPlasmaReaction(node, kin);
     });
+
+    addAlias("reaction", "Blowers-Masel");
 
     // register surface Blowers Masel reactions
     reg("surface-Blowers-Masel", [](const AnyMap& node, const Kinetics& kin) {
@@ -172,20 +174,22 @@ ReactionFactoryXML::ReactionFactoryXML()
     addAlias("three-body-legacy", "three_body");
 
     // register falloff reactions
-    reg("falloff", [](const XML_Node& node) {
-        Reaction* R = new FalloffReaction();
-        setupFalloffReaction(*(FalloffReaction*)R, node);
+    reg("falloff-legacy", [](const XML_Node& node) {
+        Reaction* R = new FalloffReaction2();
+        setupFalloffReaction(*(FalloffReaction2*)R, node);
         return R;
     });
+    addAlias("falloff-legacy", "falloff");
 
     // register falloff reactions
-    reg("chemically-activated", [](const XML_Node& node) {
-        Reaction* R = new ChemicallyActivatedReaction();
-        setupChemicallyActivatedReaction(*(ChemicallyActivatedReaction*)R, node);
+    reg("chemically-activated-legacy", [](const XML_Node& node) {
+        Reaction* R = new ChemicallyActivatedReaction2();
+        setupChemicallyActivatedReaction(*(ChemicallyActivatedReaction2*)R, node);
         return R;
     });
-    addAlias("chemically-activated", "chemact");
-    addAlias("chemically-activated", "chemically_activated");
+    addAlias("chemically-activated-legacy", "chemically-activated");
+    addAlias("chemically-activated-legacy", "chemact");
+    addAlias("chemically-activated-legacy", "chemically_activated");
 
     // register pressure-depdendent-Arrhenius reactions
     reg("pressure-dependent-Arrhenius-legacy", [](const XML_Node& node) {
@@ -244,7 +248,7 @@ bool isThreeBody(const Reaction& R)
        if (trunc(reac.second) != reac.second) {
            return false;
        }
-       nreac += reac.second;
+       nreac += static_cast<size_t>(reac.second);
     }
 
     // ensure that all products have integer stoichiometric coefficients
@@ -253,7 +257,7 @@ bool isThreeBody(const Reaction& R)
        if (trunc(prod.second) != prod.second) {
            return false;
        }
-       nprod += prod.second;
+       nprod += static_cast<size_t>(prod.second);
     }
 
     // either reactant or product side involves exactly three species
@@ -335,7 +339,8 @@ unique_ptr<Reaction> newReaction(const AnyMap& rxn_node, const Kinetics& kin)
         // Reaction type is not specified
         // See if this is a three-body reaction with a specified collision partner
         ElementaryReaction2 testReaction;
-        parseReactionEquation(testReaction, rxn_node["equation"], kin);
+        parseReactionEquation(testReaction, rxn_node["equation"].asString(),
+                              rxn_node, &kin);
         if (isThreeBody(testReaction)) {
             type = "three-body";
         }
@@ -345,7 +350,8 @@ unique_ptr<Reaction> newReaction(const AnyMap& rxn_node, const Kinetics& kin)
         // See if this is an electrochemical reaction: type of
         // receiving reaction object is unimportant in this case
         ElementaryReaction2 testReaction;
-        parseReactionEquation(testReaction, rxn_node["equation"], kin);
+        parseReactionEquation(testReaction, rxn_node["equation"].asString(),
+                              rxn_node, &kin);
         if (isElectrochemicalReaction(testReaction, kin)) {
             type = "electrochemical";
         } else {

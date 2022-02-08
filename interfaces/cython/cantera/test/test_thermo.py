@@ -13,6 +13,12 @@ class TestThermoPhase(utilities.CanteraTest):
     def test_source(self):
         self.assertEqual(self.phase.source, 'h2o2.yaml')
 
+    def test_input_header(self):
+        extra = self.phase.input_header
+        self.assertTrue(extra["description"].startswith("Hydrogen-Oxygen submechanism"))
+        self.assertEqual(extra["cantera-version"], "2.5.0")
+        self.assertEqual(extra["generator"], "ck2yaml")
+
     def test_missing_phases_key(self):
         yaml = '''
         species:
@@ -28,6 +34,17 @@ class TestThermoPhase(utilities.CanteraTest):
         '''
         with self.assertRaisesRegex(ct.CanteraError, "Key 'phases' not found"):
             _ = ct.Solution(yaml=yaml)
+
+    def test_deprecated_phase(self):
+        yaml = """
+        phases:
+        - name: phasename
+          thermo: ideal-gas
+          species: [{h2o2.yaml/species: all}]
+          deprecated: This phase is deprecated because I said so.
+        """
+        with self.assertRaisesRegex(ct.CanteraError, "(?s)phasename.*said so"):
+            ct.Solution(yaml=yaml)
 
     def test_base_attributes(self):
         self.assertIsInstance(self.phase.name, str)
@@ -259,7 +276,13 @@ class TestThermoPhase(utilities.CanteraTest):
         self.assertNear(X[3], 0.9)
 
     def test_setCompositionSingleSpecies(self):
-        gas = ct.Solution('argon.xml')
+        yaml_def = """
+            phases:
+            - name: gas
+              species: [{h2o2.yaml/species: [AR]}]
+              thermo: ideal-gas
+        """
+        gas = ct.Solution(yaml=yaml_def)
         gas.X = [1]
         gas.Y = np.array([[1.001]])
         self.assertEqual(gas.Y[0], 1.0)
@@ -297,12 +320,12 @@ class TestThermoPhase(utilities.CanteraTest):
         self.assertNear(sum(gas['O2','N2'].X), 1.0)
 
     def test_set_equivalence_ratio_sulfur(self):
-        sulfur_species = [k for k in ct.Species.listFromFile('nasa_gas.xml') if k.name in ("SO", "SO2")]
-        gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
-                          species=ct.Species.listFromFile('gri30.xml') + sulfur_species,
-                          reactions=ct.Reaction.listFromFile('gri30.xml'))
-        fuel = 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125'
-        ox = 'O2:0.5, SO2:0.25, CO2:0.125, CH:0.125'
+        sulfur_species = [k for k in ct.Species.list_from_file("nasa_gas.yaml")
+                          if k.name in ("SO", "SO2")]
+        gas = ct.Solution(thermo="ideal-gas",
+                          species=ct.Species.list_from_file("gri30.yaml") + sulfur_species)
+        fuel = "CH3:0.5, SO:0.25, OH:0.125, N2:0.125"
+        ox = "O2:0.5, SO2:0.25, CO2:0.125, CH:0.125"
 
         def test_sulfur_results(gas, fuel, ox, basis):
             gas.set_equivalence_ratio(2.0, fuel, ox, basis)
@@ -333,9 +356,10 @@ class TestThermoPhase(utilities.CanteraTest):
             gas.set_equivalence_ratio(phi, 'CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76')
             self.assertNear(phi, gas.equivalence_ratio('CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76'))
         # Check sulfur species
-        sulfur_species = [k for k in ct.Species.listFromFile('nasa_gas.xml') if k.name in ("SO", "SO2")]
-        gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
-                          species=ct.Species.listFromFile('gri30.xml') + sulfur_species)
+        sulfur_species = [k for k in ct.Species.list_from_file("nasa_gas.yaml")
+                          if k.name in ("SO", "SO2")]
+        gas = ct.Solution(thermo="ideal-gas", kinetics="gas",
+                          species=ct.Species.list_from_file("gri30.yaml") + sulfur_species)
         for phi in np.linspace(0.5, 2.0, 5):
             gas.set_equivalence_ratio(phi, 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125')
             self.assertNear(phi, gas.equivalence_ratio('CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125'))
@@ -361,7 +385,7 @@ class TestThermoPhase(utilities.CanteraTest):
 
             # set mixture to burnt state to make sure that equivalence ratio and
             # mixture fraction are independent of reaction progress
-            gas.equilibrate("HP");
+            gas.equilibrate("HP")
 
             phi = gas.equivalence_ratio(fuel, ox, basis)
             phi_loc = gas.equivalence_ratio()
@@ -457,9 +481,11 @@ class TestThermoPhase(utilities.CanteraTest):
         s1 = self.phase.s
         u1 = self.phase.u
         v1 = self.phase.v
+        self.phase.Te = T1
 
         def check_state(T, rho, Y):
             self.assertNear(self.phase.T, T)
+            self.assertNear(self.phase.Te, T)
             self.assertNear(self.phase.density, rho)
             self.assertArrayNear(self.phase.Y, Y)
 
@@ -673,6 +699,9 @@ class TestThermoPhase(utilities.CanteraTest):
         self.assertNear(D, self.phase.density)
         self.assertNear(P, self.phase.P)
 
+        Te = self.phase.Te
+        self.assertNear(Te, self.phase.Te)
+
     def test_getState_mass(self):
         self.phase.TDY = 350.0, 0.7, 'H2:0.1, H2O2:0.1, AR:0.8'
         self.check_getters()
@@ -734,11 +763,6 @@ class TestThermoPhase(utilities.CanteraTest):
         self.assertNear(self.phase.min_temp, 300.0)
         self.assertNear(self.phase.max_temp, 3500.0)
 
-    def test_unpicklable(self):
-        import pickle
-        with self.assertRaises(NotImplementedError):
-            pickle.dumps(self.phase)
-
     def test_uncopyable(self):
         import copy
         with self.assertRaises(NotImplementedError):
@@ -765,6 +789,7 @@ class TestThermoPhase(utilities.CanteraTest):
     def test_add_species_disabled(self):
         ref = ct.Solution('gri30.yaml', transport_model=None)
 
+        self.phase.transport_model = "unity-Lewis-number"
         reactor = ct.IdealGasReactor(self.phase)
         with self.assertRaisesRegex(ct.CanteraError, 'Cannot add species'):
             self.phase.add_species(ref.species('CH4'))
@@ -794,7 +819,7 @@ class TestThermoPhase(utilities.CanteraTest):
 
 class TestThermo(utilities.CanteraTest):
     def setUp(self):
-        self.gas = ct.ThermoPhase('h2o2.xml')
+        self.gas = ct.ThermoPhase("h2o2.yaml")
         self.gas.TPX = 450, 2e5, 'H2:1.0, O2:0.4, AR:3, H2O:0.1'
 
     def test_setSV_lowT(self):
@@ -913,9 +938,9 @@ class TestThermo(utilities.CanteraTest):
 
 class TestInterfacePhase(utilities.CanteraTest):
     def setUp(self):
-        self.gas = ct.Solution('diamond.xml', 'gas')
-        self.solid = ct.Solution('diamond.xml', 'diamond')
-        self.interface = ct.Interface('diamond.xml', 'diamond_100',
+        self.gas = ct.Solution("diamond.yaml", "gas")
+        self.solid = ct.Solution("diamond.yaml", "diamond")
+        self.interface = ct.Interface("diamond.yaml", "diamond_100",
                                       (self.gas, self.solid))
 
     def test_properties(self):
@@ -959,6 +984,7 @@ class ImportTest(utilities.CanteraTest):
         self.assertEqual(gas.n_species, nSpec)
         self.assertEqual(gas.n_elements, nElem)
 
+    @utilities.allow_deprecated
     def test_import_phase_cti(self):
         gas1 = ct.Solution('air-no-reactions.cti', 'air')
         self.check(gas1, 'air', 300, 101325, 8, 3)
@@ -966,11 +992,13 @@ class ImportTest(utilities.CanteraTest):
         gas2 = ct.Solution('air-no-reactions.cti', 'notair')
         self.check(gas2, 'notair', 900, 5*101325, 7, 2)
 
+    @utilities.allow_deprecated
     def test_import_phase_cti2(self):
         # This should import the first phase, i.e. 'air'
         gas = ct.Solution('air-no-reactions.cti')
         self.check(gas, 'air', 300, 101325, 8, 3)
 
+    @utilities.allow_deprecated
     def test_import_phase_xml(self):
         gas1 = ct.Solution('air-no-reactions.xml', 'air')
         self.check(gas1, 'air', 300, 101325, 8, 3)
@@ -978,6 +1006,7 @@ class ImportTest(utilities.CanteraTest):
         gas2 = ct.Solution('air-no-reactions.xml', 'notair')
         self.check(gas2, 'notair', 900, 5*101325, 7, 2)
 
+    @utilities.allow_deprecated
     def test_import_phase_cti_text(self):
         cti_def = """
 ideal_gas(name='spam', elements='O H',
@@ -988,6 +1017,7 @@ ideal_gas(name='spam', elements='O H',
         gas = ct.Solution(source=cti_def)
         self.check(gas, 'spam', 350, 2e6, 8, 2)
 
+    @utilities.allow_deprecated
     def test_import_phase_xml_text(self):
         xml_def = """
 <?xml version="1.0"?>
@@ -1015,7 +1045,7 @@ ideal_gas(name='spam', elements='O H',
         gas1.TPX = 350, 101325, 'H2:0.3, O2:0.7'
         gas1.equilibrate('HP')
 
-        species = ct.Species.listFromFile('h2o2.yaml')
+        species = ct.Species.list_from_file("h2o2.yaml")
         gas2 = ct.ThermoPhase(thermo='IdealGas', species=species)
         gas2.TPX = 350, 101325, 'H2:0.3, O2:0.7'
         gas2.equilibrate('HP')
@@ -1024,6 +1054,7 @@ ideal_gas(name='spam', elements='O H',
         self.assertNear(gas1.T, gas2.T)
         self.assertArrayNear(gas1.X, gas2.X)
 
+    @utilities.allow_deprecated
     def test_checkReactionBalance(self):
         with self.assertRaisesRegex(ct.CanteraError, 'reaction is unbalanced'):
             ct.Solution('h2o2_unbalancedReaction.xml')
@@ -1079,6 +1110,7 @@ class TestSpecies(utilities.CanteraTest):
             s = self.gas.species(name)
             self.assertEqual(s.name, name)
 
+    @utilities.allow_deprecated
     def test_fromCti(self):
         h2_cti = """
             species(
@@ -1107,6 +1139,7 @@ class TestSpecies(utilities.CanteraTest):
         self.assertEqual(s1.composition, s2.composition)
         self.assertEqual(s1.thermo.cp(350), s2.thermo.cp(350))
 
+    @utilities.allow_deprecated
     def test_fromXml(self):
         import xml.etree.ElementTree as ET
         root = ET.parse(self.cantera_data_path / "h2o2.xml").getroot()
@@ -1120,23 +1153,26 @@ class TestSpecies(utilities.CanteraTest):
         self.assertEqual(s1.composition, s2.composition)
         self.assertEqual(s1.thermo.cp(350), s2.thermo.cp(350))
 
+    @utilities.allow_deprecated
     def test_listFromFile_cti(self):
         S = ct.Species.listFromFile('h2o2.cti')
         self.assertEqual(S[3].name, self.gas.species_name(3))
 
+    @utilities.allow_deprecated
     def test_listFromFile_xml(self):
         S = ct.Species.listFromFile('h2o2.xml')
         self.assertEqual(S[3].name, self.gas.species_name(3))
 
     def test_listfromFile_yaml(self):
-        S = ct.Species.listFromFile('h2o2.yaml')
+        S = ct.Species.list_from_file("h2o2.yaml")
         self.assertEqual({sp.name for sp in S}, set(self.gas.species_names))
 
+    @utilities.allow_deprecated
     def test_listFromCti(self):
         S = ct.Species.listFromCti((self.cantera_data_path / "h2o2.cti").read_text())
         self.assertEqual(S[3].name, self.gas.species_name(3))
 
-    def test_listFomYaml(self):
+    def test_list_from_yaml(self):
         yaml = '''
         - name: H2O
           composition: {H: 2, O: 1}
@@ -1145,25 +1181,48 @@ class TestSpecies(utilities.CanteraTest):
           composition: {H: 1, O: 2}
           thermo: {model: constant-cp, h0: 200}
         '''
-        species = ct.Species.listFromYaml(yaml)
+        species = ct.Species.list_from_yaml(yaml)
         self.assertEqual(species[0].name, 'H2O')
         self.assertEqual(species[1].composition, {'H': 1, 'O': 2})
         self.assertNear(species[0].thermo.h(300), 100)
 
-    def test_listFromYaml_section(self):
-        species = ct.Species.listFromYaml(
+    def test_list_from_yaml_section(self):
+        species = ct.Species.list_from_yaml(
             (self.test_data_path / "ideal-gas.yaml").read_text(),
             'species')
 
         self.assertEqual(species[0].name, 'O2')
         self.assertEqual(species[1].composition, {'N': 1, 'O': 1})
 
+    def test_from_yaml(self):
+        yaml = """
+        name: H2O
+        composition: {H: 2, O: 1}
+        thermo: {model: constant-cp, h0: 100}
+        """
+        species = ct.Species.from_yaml(yaml)
+        self.assertEqual(species.name, 'H2O')
+        self.assertEqual(species.composition, {'H': 2, 'O': 1})
+        self.assertNear(species.thermo.h(300), 100)
+
+    def test_from_dict(self):
+        data = {
+            "name": "H2O",
+            "composition": {"H": 2, "O": 1},
+            "thermo": {"model": "constant-cp", "h0": 100},
+        }
+        species = ct.Species.from_dict(data)
+        self.assertEqual(species.name, 'H2O')
+        self.assertEqual(species.composition, {'H': 2, 'O': 1})
+        self.assertNear(species.thermo.h(300), 100)
+
+    @utilities.allow_deprecated
     def test_listFromXml(self):
         S = ct.Species.listFromXml((self.cantera_data_path / "h2o2.xml").read_text())
         self.assertEqual(S[4].name, self.gas.species_name(4))
 
     def test_modify_thermo(self):
-        S = {sp.name: sp for sp in ct.Species.listFromFile('h2o2.xml')}
+        S = {sp.name: sp for sp in ct.Species.list_from_file("h2o2.yaml")}
         self.gas.TPX = 400, 2*ct.one_atm, 'H2:1.0'
         g0 = self.gas.gibbs_mole
 
@@ -1175,7 +1234,7 @@ class TestSpecies(utilities.CanteraTest):
         self.assertNear(g0, self.gas.gibbs_mole)
 
     def test_modify_thermo_invalid(self):
-        S = {sp.name: sp for sp in ct.Species.listFromFile('h2o2.xml')}
+        S = {sp.name: sp for sp in ct.Species.list_from_file("h2o2.yaml")}
 
         orig = S['H2']
         thermo = orig.thermo
@@ -1270,14 +1329,14 @@ class TestSpeciesThermo(utilities.CanteraTest):
         self.assertTrue(st._check_n_coeffs(st.n_coeffs))
 
     def test_nasa9_load(self):
-        gas = ct.Solution('airNASA9.cti')
+        gas = ct.Solution("airNASA9.yaml")
         st = gas.species(3).thermo
         self.assertIsInstance(st, ct.Nasa9PolyMultiTempRegion)
         self.assertEqual(st.n_coeffs, len(st.coeffs))
         self.assertTrue(st._check_n_coeffs(st.n_coeffs))
 
     def test_nasa9_create(self):
-        gas = ct.Solution('airNASA9.cti')
+        gas = ct.Solution("airNASA9.yaml")
         st = gas.species(3).thermo
         t_min = st.min_temp
         t_max = st.max_temp
@@ -1445,6 +1504,11 @@ class TestQuantity(utilities.CanteraTest):
         q1.equilibrate('HP')
         self.assertNear(q1.T, T2)
 
+    def test_invalid_setter(self):
+        q1 = ct.Quantity(self.gas, mass =3)
+        with self.assertRaises(AttributeError):
+            q1.HPQ = self.gas.H, self.gas.P, 1
+
     def test_incompatible(self):
         gas2 = ct.Solution('h2o2.yaml', transport_model=None)
         q1 = ct.Quantity(self.gas)
@@ -1484,8 +1548,16 @@ class TestMisc(utilities.CanteraTest):
             options=["skip_undeclared_elements"],
             initial_state=state(temperature=300, pressure=(1, "bar"))
         )"""
+        gas_yaml = """
+            phases:
+            - name: gas
+              thermo: ideal-gas
+              elements: [S, C, Cs]
+              species: [{nasa_gas.yaml/species: all}]
+              skip-undeclared-elements: true
+        """
         ct.suppress_thermo_warnings(True)
-        gas = ct.Solution(source=gas_cti)
+        gas = ct.Solution(yaml=gas_yaml)
         with self.assertRaisesRegex(ct.CanteraError, 'is not unique'):
             gas.species_index('cs')
         gas.case_sensitive_species_names = True

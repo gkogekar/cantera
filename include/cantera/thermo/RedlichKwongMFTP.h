@@ -21,10 +21,10 @@ class RedlichKwongMFTP : public MixtureFugacityTP
 public:
     //! Construct a RedlichKwongMFTP object from an input file
     /*!
-     * @param inputFile Name of the input file containing the phase definition.
-     *                  If blank, an empty phase will be created.
-     * @param id        name (ID) of the phase in the input file. If empty, the
-     *                  first phase definition in the input file will be used.
+     * @param infile Name of the input file containing the phase definition.
+     *               If blank, an empty phase will be created.
+     * @param id     name (ID) of the phase in the input file. If empty, the
+     *               first phase definition in the input file will be used.
      */
     explicit RedlichKwongMFTP(const std::string& infile="",
                               const std::string& id="");
@@ -65,7 +65,7 @@ public:
      */
     virtual doublereal pressure() const;
 
-    // @}
+    //! @}
 
 public:
 
@@ -97,7 +97,7 @@ public:
     virtual void getActivityCoefficients(doublereal* ac) const;
 
     /// @name  Partial Molar Properties of the Solution
-    //@{
+    //! @{
 
     //! Get the array of non-dimensional species chemical potentials.
     //! These are partial molar Gibbs free energies.
@@ -119,9 +119,9 @@ public:
     virtual void getPartialMolarIntEnergies(doublereal* ubar) const;
     virtual void getPartialMolarCp(doublereal* cpbar) const;
     virtual void getPartialMolarVolumes(doublereal* vbar) const;
+    //! @}
 
 public:
-    //@}
     //! @name Initialization Methods - For Internal use
     /*!
      * The following methods are used in the process of constructing
@@ -129,7 +129,7 @@ public:
      * input file. They are not normally used in application programs.
      * To see how they are used, see importPhase().
      */
-    //@{
+    //! @{
 
     virtual bool addSpecies(shared_ptr<Species> spec);
     virtual void setParametersFromXML(const XML_Node& thermoNode);
@@ -141,12 +141,15 @@ public:
     //! Retrieve a and b coefficients by looking up tabulated critical parameters
     /*!
      *  If pureFluidParameters are not provided for any species in the phase,
-     *  consult the critical properties tabulated in /thermo/critProperties.xml.
+     *  consult the critical properties tabulated in `critical-properties.yaml`.
      *  If the species is found there, calculate pure fluid parameters a_k and b_k as:
      *  \f[ a_k = 0.4278*R**2*T_c^2.5/P_c \f]
      *
      *  and:
      *  \f[ b_k = 0.08664*R*T_c/P_c \f]
+     *
+     * @deprecated To be removed after Cantera 2.6. Use of critical-properties.yaml is
+     *     integrated into initThermo() for YAML input files.
      *
      *  @param iName    Name of the species
      */
@@ -199,7 +202,7 @@ private:
      */
     void readXMLCrossFluid(XML_Node& pureFluidParam);
 
-    // @}
+    //! @}
 
 protected:
     // Special functions inherited from MixtureFugacityTP

@@ -1,9 +1,18 @@
 import numpy as np
 import re
 import itertools
+import pkg_resources
 
 import cantera as ct
 from . import utilities
+
+# avoid explicit dependence of cantera on scipy
+try:
+    pkg_resources.get_distribution('scipy')
+except pkg_resources.DistributionNotFound:
+    _scipy_sparse = ImportError('Method requires a working scipy installation.')
+else:
+    from scipy import sparse as _scipy_sparse
 
 
 class TestKinetics(utilities.CanteraTest):
@@ -47,9 +56,28 @@ class TestKinetics(utilities.CanteraTest):
         self.assertArrayNear(0.5 * fwd_rates0, fwd_rates2)
         self.assertArrayNear(0.5 * rev_rates0, rev_rates2)
 
+    def test_legacy_reaction_rate(self):
+        ct.use_legacy_rate_constants(True) # set to False for test suite
+        with self.assertRaisesRegex(ct.CanteraError, "Deprecated: Behavior to change"):
+            self.phase.forward_rate_constants
+
+        ct.suppress_deprecation_warnings() # disable fatal deprecation warnings
+        fwd_rates_legacy = self.phase.forward_rate_constants
+
+        ct.use_legacy_rate_constants(False)
+        ct.make_deprecation_warnings_fatal() # re-enable fatal deprecation warnings
+
+        fwd_rates = self.phase.forward_rate_constants
+        ix_3b = np.array([self.phase.reaction_type_str(i) == "three-body"
+            for i in range(self.phase.n_reactions)])
+        ix_other = ix_3b == False
+
+        self.assertArrayNear(fwd_rates_legacy[ix_other], fwd_rates[ix_other])
+        self.assertFalse((fwd_rates_legacy[ix_3b] == fwd_rates[ix_3b]).any())
+
     def test_reaction_type(self):
         self.assertIn(self.phase.reaction_type_str(0), ["three-body", "three-body-legacy"])
-        self.assertIn(self.phase.reaction_type_str(2), ["elementary", "elementary-legacy"])
+        self.assertIn(self.phase.reaction_type_str(2), ["reaction", "elementary-legacy"])
         self.assertEqual(self.phase.reaction_type_str(21), "falloff")
 
         with self.assertRaisesRegex(ValueError, 'out of range'):
@@ -79,8 +107,8 @@ class TestKinetics(utilities.CanteraTest):
                     self.assertIn(self.phase.species_name(k), P)
 
     def test_stoich_coeffs(self):
-        nu_r = self.phase.reactant_stoich_coeffs()
-        nu_p = self.phase.product_stoich_coeffs()
+        nu_r = self.phase.reactant_stoich_coeffs3
+        nu_p = self.phase.product_stoich_coeffs3
 
         def check_reactant(s, i, value):
             k = self.phase.kinetics_species_index(s)
@@ -111,6 +139,20 @@ class TestKinetics(utilities.CanteraTest):
         check_product('O', 0, 0)
         check_product('O2', 0, 1)
 
+    @utilities.unittest.skipIf(isinstance(_scipy_sparse, ImportError), "scipy is not installed")
+    def test_stoich_coeffs_sparse(self):
+        nu_r_dense = self.phase.reactant_stoich_coeffs3
+        nu_p_dense = self.phase.product_stoich_coeffs3
+
+        ct.use_sparse(True)
+        nu_r_sparse = self.phase.reactant_stoich_coeffs3
+        nu_p_sparse = self.phase.product_stoich_coeffs3
+
+        self.assertTrue((nu_r_sparse.toarray() == nu_r_dense).all())
+        self.assertTrue((nu_p_sparse.toarray() == nu_p_dense).all())
+
+        ct.use_sparse(False)
+
     def test_rates_of_progress(self):
         self.assertEqual(len(self.phase.net_rates_of_progress),
                          self.phase.n_reactions)
@@ -124,12 +166,14 @@ class TestKinetics(utilities.CanteraTest):
 
     def test_rate_constants(self):
         self.assertEqual(len(self.phase.forward_rate_constants), self.phase.n_reactions)
-        self.assertArrayNear(self.phase.forward_rate_constants / self.phase.reverse_rate_constants,
-                             self.phase.equilibrium_constants)
+        ix = self.phase.reverse_rate_constants != 0.
+        self.assertArrayNear(
+            self.phase.forward_rate_constants[ix] / self.phase.reverse_rate_constants[ix],
+            self.phase.equilibrium_constants[ix])
 
     def test_species_rates(self):
-        nu_p = self.phase.product_stoich_coeffs()
-        nu_r = self.phase.reactant_stoich_coeffs()
+        nu_p = self.phase.product_stoich_coeffs3
+        nu_r = self.phase.reactant_stoich_coeffs3
         creation = (np.dot(nu_p, self.phase.forward_rates_of_progress) +
                     np.dot(nu_r, self.phase.reverse_rates_of_progress))
         destruction = (np.dot(nu_r, self.phase.forward_rates_of_progress) +
@@ -155,10 +199,10 @@ class KineticsFromReactions(utilities.CanteraTest):
     objects instead of from input files.
     """
     def test_idealgas(self):
-        gas1 = ct.Solution('h2o2.xml')
+        gas1 = ct.Solution("h2o2.yaml")
 
-        S = ct.Species.listFromFile('h2o2.xml')
-        R = ct.Reaction.listFromFile('h2o2.xml')
+        S = ct.Species.list_from_file("h2o2.yaml")
+        R = ct.Reaction.list_from_file("h2o2.yaml", gas1)
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=S, reactions=R)
 
@@ -166,10 +210,10 @@ class KineticsFromReactions(utilities.CanteraTest):
         gas1.TPY = 800, 2*ct.one_atm, 'H2:0.3, O2:0.7, OH:2e-4, O:1e-3, H:5e-5'
         gas2.TPY = gas1.TPY
 
-        self.assertTrue((gas1.reactant_stoich_coeffs() ==
-                         gas2.reactant_stoich_coeffs()).all())
-        self.assertTrue((gas1.product_stoich_coeffs() ==
-                         gas2.product_stoich_coeffs()).all())
+        self.assertTrue((gas1.reactant_stoich_coeffs3 ==
+                         gas2.reactant_stoich_coeffs3).all())
+        self.assertTrue((gas1.product_stoich_coeffs3 ==
+                         gas2.product_stoich_coeffs3).all())
 
         self.assertArrayNear(gas1.delta_gibbs,
                              gas2.delta_gibbs)
@@ -179,12 +223,10 @@ class KineticsFromReactions(utilities.CanteraTest):
                              gas2.net_production_rates)
 
     def test_surface(self):
-        gas_species = ct.Species.listFromFile('gri30.xml')
-        surf_species = ct.Species.listFromFile('ptcombust.xml')
-        reactions = ct.Reaction.listFromFile('ptcombust.xml')
-
-        gas = ct.Solution('ptcombust.xml', 'gas')
-        surf1 = ct.Interface('ptcombust.xml', 'Pt_surf', [gas])
+        gas = ct.Solution("ptcombust.yaml", "gas")
+        surf1 = ct.Interface("ptcombust.yaml", "Pt_surf", [gas])
+        surf_species = ct.Species.list_from_file("ptcombust.yaml")
+        reactions = ct.Reaction.list_from_file("ptcombust.yaml", surf1)
 
         surf2 = ct.Interface(thermo='Surface', kinetics='interface',
                              species=surf_species, reactions=reactions,
@@ -211,8 +253,7 @@ class KineticsFromReactions(utilities.CanteraTest):
                              r2.rate.pre_exponential_factor)
             self.assertEqual(r1.rate.temperature_exponent,
                              r2.rate.temperature_exponent)
-            self.assertEqual(r1.rate.activation_energy,
-                             r2.rate.activation_energy)
+            self.assertNear(r1.rate.activation_energy, r2.rate.activation_energy)
 
         self.assertArrayNear(surf1.delta_enthalpy,
                              surf2.delta_enthalpy)
@@ -231,8 +272,8 @@ class KineticsFromReactions(utilities.CanteraTest):
     def test_add_reaction(self):
         gas1 = ct.Solution('h2o2.yaml', transport_model=None)
 
-        S = ct.Species.listFromFile('h2o2.yaml')
-        R = ct.Reaction.listFromFile('h2o2.yaml', gas1)
+        S = ct.Species.list_from_file("h2o2.yaml")
+        R = ct.Reaction.list_from_file("h2o2.yaml", gas1)
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=S, reactions=R[:5])
 
@@ -244,10 +285,10 @@ class KineticsFromReactions(utilities.CanteraTest):
 
         self.assertEqual(gas1.n_reactions, gas2.n_reactions)
 
-        self.assertTrue((gas1.reactant_stoich_coeffs() ==
-                         gas2.reactant_stoich_coeffs()).all())
-        self.assertTrue((gas1.product_stoich_coeffs() ==
-                         gas2.product_stoich_coeffs()).all())
+        self.assertTrue((gas1.reactant_stoich_coeffs3 ==
+                         gas2.reactant_stoich_coeffs3).all())
+        self.assertTrue((gas1.product_stoich_coeffs3 ==
+                         gas2.product_stoich_coeffs3).all())
 
         self.assertArrayNear(gas1.delta_gibbs,
                              gas2.delta_gibbs)
@@ -348,24 +389,24 @@ class KineticsRepeatability(utilities.CanteraTest):
         self.assertArrayNear(w1, w4)
 
     def test_gri30_composition(self):
-        self.check_rates_composition('gri30.xml')
+        self.check_rates_composition("gri30.yaml")
 
     def test_gri30_temperature(self):
-        self.check_rates_temperature1('gri30.xml')
-        self.check_rates_temperature2('gri30.xml')
+        self.check_rates_temperature1("gri30.yaml")
+        self.check_rates_temperature2("gri30.yaml")
 
     def test_gri30_pressure(self):
-        self.check_rates_pressure('gri30.xml')
+        self.check_rates_pressure("gri30.yaml")
 
     def test_h2o2_composition(self):
-        self.check_rates_composition('h2o2.xml')
+        self.check_rates_composition("h2o2.yaml")
 
     def test_h2o2_temperature(self):
-        self.check_rates_temperature1('h2o2.xml')
-        self.check_rates_temperature2('h2o2.xml')
+        self.check_rates_temperature1("h2o2.yaml")
+        self.check_rates_temperature2("h2o2.yaml")
 
     def test_h2o2_pressure(self):
-        self.check_rates_pressure('h2o2.xml')
+        self.check_rates_pressure("h2o2.yaml")
 
     def test_pdep_composition(self):
         self.check_rates_composition('pdep-test.yaml')
@@ -382,12 +423,12 @@ class KineticsRepeatability(utilities.CanteraTest):
 
         # Set a gas state that is near enough to equilibrium that changes in the
         # reverse rate always show up in the net rate
-        gas = self.setup_gas('gri30.xml')
+        gas = self.setup_gas("gri30.yaml")
         gas.TPX = self.T0, self.P0, self.X0
         gas.equilibrate('TP')
         gas.TP = gas.T + 20, None
 
-        S = {sp.name: sp for sp in ct.Species.listFromFile('gri30.xml')}
+        S = {sp.name: sp for sp in ct.Species.list_from_file("gri30.yaml")}
         w1 = gas.net_rates_of_progress
 
         OH = gas.species('OH')
@@ -404,16 +445,20 @@ class KineticsRepeatability(utilities.CanteraTest):
                 self.assertAlmostEqual(w2[i] / w1[i], 1.0)
 
     def test_pdep_err(self):
-        err_msg = ("CanteraError thrown by Plog::validate:",
+        err_msg = ("CanteraError thrown by PlogRate::validate:",
                    "Invalid rate coefficient for reaction 'CH2CHOO <=> CH3O + CO'",
                    "at P = 32019, T = 500.0",
                    "at P = 32019, T = 1000.0",
                    "at P = 1.0132e+05, T = 500.0",
-                   "at P = 1.0132e+05, T = 1000.0",
-                   "Invalid rate coefficient for reaction 'CH2CHOO <=> CH3 + CO2'",
-                   "at P = 1.0132e+05, T = 500.0",
-                   "InputFileError thrown by Reaction::checkBalance:",
-                   "The following reaction is unbalanced: H2O2 + OH <=> 2 H2O + HO2")
+                   "at P = 1.0132e+05, T = 1000.0")
+
+        if not ct.debug_mode_enabled():
+            err_msg += (
+                "Invalid rate coefficient for reaction 'CH2CHOO <=> CH3 + CO2'",
+                "at P = 1.0132e+05, T = 500.0",
+                "InputFileError thrown by Reaction::checkBalance:",
+                "The following reaction is unbalanced: H2O2 + OH <=> 2 H2O + HO2"
+            )
         try:
             ct.Solution('addReactions_err_test.yaml')
             self.fail('CanteraError not raised')
@@ -422,6 +467,25 @@ class KineticsRepeatability(utilities.CanteraTest):
             for msg in err_msg:
                 self.assertIn(msg, err_msg_list)
 
+    def test_sticking_coeff_err(self):
+        err_msg = (r"Sticking coefficient is greater than 1 for reaction 'O2 \+ 2 PT\(S\) => 2 O\(S\)'",
+                   "at T = 200.0",
+                   "at T = 500.0",
+                   "at T = 1000.0",
+                   "at T = 2000.0",
+                   "at T = 5000.0",
+                   "at T = 10000.0",
+                   "Sticking coefficient is greater than 1 for reaction",
+                   "CanteraError thrown by InterfaceReaction::validate:",
+                   )
+        if not ct.debug_mode_enabled():
+            err_msg += ("CanteraError thrown by BlowersMaselInterfaceReaction::validate:",)
+
+        ct.make_warnings_fatal()
+        for err in err_msg:
+            with self.assertRaisesRegex(ct.CanteraError, err):
+                gas = ct.Solution('sticking_coeff_check.yaml')
+                surface = ct.Interface('sticking_coeff_check.yaml', 'Pt_surf', [gas])
 
 class TestUndeclared(utilities.CanteraTest):
 
@@ -530,10 +594,30 @@ class TestUndeclared(utilities.CanteraTest):
         with self.assertRaisesRegex(ct.CanteraError, "reaction orders for undeclared"):
             ct.Solution(yaml=gas_def)
 
+    def test_skip_undeclared_surf_species(self):
+        phase_defs = """
+            phases:
+            - name: gas
+              thermo: ideal-gas
+              species:
+              - gri30.yaml/species: [H2, H, O, OH, H2O, CO2]
+            - name: Pt_surf
+              thermo: ideal-surface
+              species:
+              - ptcombust.yaml/species: [PT(S), H(S), H2O(S), OH(S), CO2(S), CH2(S)s,
+                  CH(S), C(S), O(S)]
+              kinetics: surface
+              reactions: [ptcombust.yaml/reactions: declared-species]
+              site-density: 2.7063e-09
+            """
+        gas = ct.Solution(yaml=phase_defs, name="gas")
+        surf = ct.Interface(yaml=phase_defs, name="Pt_surf", adjacent=[gas])
+        self.assertEqual(surf.n_reactions, 14)
+
 
 class TestEmptyKinetics(utilities.CanteraTest):
     def test_empty(self):
-        gas = ct.Solution('air-no-reactions.xml')
+        gas = ct.Solution("air-no-reactions.yaml")
 
         self.assertEqual(gas.n_reactions, 0)
         self.assertArrayNear(gas.creation_rates, np.zeros(gas.n_species))
@@ -667,7 +751,7 @@ class TestReactionPath(utilities.CanteraTest):
 
 class TestChemicallyActivated(utilities.CanteraTest):
     def test_rate_evaluation(self):
-        gas = ct.Solution('chemically-activated-reaction.xml')
+        gas = ct.Solution("chemically-activated-reaction.yaml")
         P = [2026.5, 202650.0, 10132500.0] # pressure
 
         # forward rate of progress, computed using Chemkin
@@ -680,7 +764,7 @@ class TestChemicallyActivated(utilities.CanteraTest):
 
 class ExplicitForwardOrderTest(utilities.CanteraTest):
     def setUp(self):
-        self.gas = ct.Solution('explicit-forward-order.xml')
+        self.gas = ct.Solution("explicit-forward-order.yaml")
         self.gas.TPX = 800, 101325, [0.01, 0.90, 0.02, 0.03, 0.04]
 
     def test_irreversibility(self):
@@ -871,8 +955,9 @@ class TestReaction(utilities.CanteraTest):
         self.gas = ct.Solution('h2o2.yaml', transport_model=None)
         self.gas.X = 'H2:0.1, H2O:0.2, O2:0.7, O:1e-4, OH:1e-5, H:2e-5'
         self.gas.TP = 900, 2*ct.one_atm
-        self.species = ct.Species.listFromFile('h2o2.yaml')
+        self.species = ct.Species.list_from_file("h2o2.yaml")
 
+    @utilities.allow_deprecated
     def test_fromCti(self):
         r = ct.Reaction.fromCti('''three_body_reaction('2 O + M <=> O2 + M',
             [1.200000e+11, -1.0, 0.0], efficiencies='AR:0.83 H2:2.4 H2O:15.4')''')
@@ -886,6 +971,7 @@ class TestReaction(utilities.CanteraTest):
         self.assertIn('O2', r)
         self.assertNotIn('H2O', r)
 
+    @utilities.allow_deprecated
     def test_fromXml(self):
         import xml.etree.ElementTree as ET
         root = ET.parse(self.cantera_data_path / "h2o2.xml").getroot()
@@ -898,8 +984,8 @@ class TestReaction(utilities.CanteraTest):
         self.assertEqual(r.efficiencies['H2O'], 15.4)
         self.assertEqual(r.rate.temperature_exponent, -1.0)
 
-    def test_fromYaml(self):
-        r = ct.Reaction.fromYaml(
+    def test_from_yaml(self):
+        r = ct.Reaction.from_yaml(
                 "{equation: 2 O + M <=> O2 + M,"
                 " type: three-body,"
                 " rate-constant: {A: 1.2e+11, b: -1.0, Ea: 0.0},"
@@ -916,11 +1002,12 @@ class TestReaction(utilities.CanteraTest):
         self.assertNotIn('H2O', r)
 
     def test_listFromFile(self):
-        R = ct.Reaction.listFromFile('h2o2.yaml', self.gas)
+        R = ct.Reaction.list_from_file("h2o2.yaml", self.gas)
         eq1 = [r.equation for r in R]
         eq2 = [r.equation for r in self.gas.reactions()]
         self.assertEqual(eq1, eq2)
 
+    @utilities.allow_deprecated
     def test_listFromCti(self):
         gas = ct.Solution("h2o2.xml", transport_model=None)
         R = ct.Reaction.listFromCti((self.cantera_data_path / "h2o2.cti").read_text())
@@ -928,12 +1015,27 @@ class TestReaction(utilities.CanteraTest):
         eq2 = [r.equation for r in gas.reactions()]
         self.assertEqual(eq1, eq2)
 
+    @utilities.allow_deprecated
     def test_listFromXml(self):
         gas = ct.Solution("h2o2.xml", transport_model=None)
         R = ct.Reaction.listFromXml((self.cantera_data_path / "h2o2.xml").read_text())
         eq1 = [r.equation for r in R]
         eq2 = [r.equation for r in gas.reactions()]
         self.assertEqual(eq1, eq2)
+
+    def test_list_from_yaml(self):
+        yaml = """
+            - equation: O + H2 <=> H + OH  # Reaction 3
+              rate-constant: {A: 3.87e+04, b: 2.7, Ea: 6260.0}
+            - equation: O + HO2 <=> OH + O2  # Reaction 4
+              rate-constant: {A: 2.0e+13, b: 0.0, Ea: 0.0}
+            - equation: O + H2O2 <=> OH + HO2  # Reaction 5
+              rate-constant: {A: 9.63e+06, b: 2.0, Ea: 4000.0}
+        """
+        R = ct.Reaction.list_from_yaml(yaml, self.gas)
+        self.assertEqual(len(R), 3)
+        self.assertIn('HO2', R[2].products)
+        self.assertEqual(R[0].rate.temperature_exponent, 2.7)
 
     def test_listFromYaml(self):
         yaml = """
@@ -944,7 +1046,8 @@ class TestReaction(utilities.CanteraTest):
             - equation: O + H2O2 <=> OH + HO2  # Reaction 5
               rate-constant: {A: 9.63e+06, b: 2.0, Ea: 4000.0}
         """
-        R = ct.Reaction.listFromYaml(yaml, self.gas)
+        with self.assertWarnsRegex(DeprecationWarning, "is renamed to 'list_from_yaml'"):
+            R = ct.Reaction.listFromYaml(yaml, self.gas)
         self.assertEqual(len(R), 3)
         self.assertIn('HO2', R[2].products)
         self.assertEqual(R[0].rate.temperature_exponent, 2.7)
@@ -958,8 +1061,8 @@ class TestReaction(utilities.CanteraTest):
         self.assertEqual(data['equation'], R.equation)
 
     def test_input_data_from_scratch(self):
-        r = ct.ElementaryReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
-        r.rate = ct.ArrheniusRate(3.87e1, 2.7, 2.6e7)
+        r = ct.Reaction({"O":1, "H2":1}, {"H":1, "OH":1},
+                        ct.ArrheniusRate(3.87e1, 2.7, 2.6e7))
         data = r.input_data
         self.assertNear(data['rate-constant']['A'], 3.87e1)
         self.assertNear(data['rate-constant']['b'], 2.7)
@@ -969,8 +1072,8 @@ class TestReaction(utilities.CanteraTest):
         self.assertIn('OH', terms)
 
     def test_elementary(self):
-        r = ct.ElementaryReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
-        r.rate = ct.ArrheniusRate(3.87e1, 2.7, 6260*1000*4.184)
+        r = ct.Reaction({"O":1, "H2":1}, {"H":1, "OH":1},
+                        ct.ArrheniusRate(3.87e1, 2.7, 6260*1000*4.184))
 
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=self.species, reactions=[r])
@@ -986,9 +1089,9 @@ class TestReaction(utilities.CanteraTest):
         self.assertNear(R.rate(self.gas.T), self.gas.forward_rate_constants[2])
 
     def test_negative_A(self):
-        species = ct.Species.listFromFile('gri30.cti')
-        r = ct.ElementaryReaction('NH:1, NO:1', 'N2O:1, H:1')
-        r.rate = ct.ArrheniusRate(-2.16e13, -0.23, 0)
+        species = ct.Species.list_from_file("gri30.yaml")
+        r = ct.Reaction("NH:1, NO:1", "N2O:1, H:1",
+                        ct.ArrheniusRate(-2.16e13, -0.23, 0))
 
         self.assertFalse(r.rate.allow_negative_pre_exponential_factor)
 
@@ -1001,33 +1104,32 @@ class TestReaction(utilities.CanteraTest):
                           species=species, reactions=[r])
 
     def test_negative_A_falloff(self):
-        species = ct.Species.listFromFile('gri30.yaml')
+        species = ct.Species.list_from_file("gri30.yaml")
         r = ct.FalloffReaction('NH:1, NO:1', 'N2O:1, H:1')
-        r.low_rate = ct.Arrhenius(2.16e13, -0.23, 0)
-        r.high_rate = ct.Arrhenius(-8.16e12, -0.5, 0)
-        self.assertFalse(r.allow_negative_pre_exponential_factor)
+        low_rate = ct.Arrhenius(2.16e13, -0.23, 0)
+        high_rate = ct.Arrhenius(-8.16e12, -0.5, 0)
 
         with self.assertRaisesRegex(ct.CanteraError, 'pre-exponential'):
-            gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
-                              species=species, reactions=[r])
+            ct.LindemannRate(low_rate, high_rate, ())
 
-        r.allow_negative_pre_exponential_factor = True
+        rate = ct.LindemannRate()
+        self.assertFalse(rate.allow_negative_pre_exponential_factor)
+        rate.allow_negative_pre_exponential_factor = True
+        rate.high_rate = high_rate
         # Should still fail because of mixed positive and negative A factors
         with self.assertRaisesRegex(ct.CanteraError, 'pre-exponential'):
-            gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
-                              species=species, reactions=[r])
+            rate.low_rate = low_rate
 
-        r.low_rate = ct.Arrhenius(-2.16e13, -0.23, 0)
+        rate.low_rate = ct.Arrhenius(-2.16e13, -0.23, 0)
+        r.rate = rate
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=species, reactions=[r])
         self.assertLess(gas.forward_rate_constants, 0)
 
     def test_threebody(self):
-        r = ct.ThreeBodyReaction()
-        r.reactants = {'O':1, 'H':1}
-        r.products = {'OH':1}
-        r.rate = ct.ArrheniusRate(5e11, -1.0, 0.0)
-        r.efficiencies = {'AR':0.7, 'H2':2.0, 'H2O':6.0}
+        r = ct.ThreeBodyReaction({"O":1, "H":1}, {"OH":1},
+                                 ct.ArrheniusRate(5e11, -1.0, 0.0))
+        r.efficiencies = {"AR":0.7, "H2":2.0, "H2O":6.0}
 
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=self.species, reactions=[r])
@@ -1039,12 +1141,12 @@ class TestReaction(utilities.CanteraTest):
                         self.gas.net_rates_of_progress[1])
 
     def test_falloff(self):
-        r = ct.FalloffReaction('OH:2', 'H2O2:1')
-        r.high_rate = ct.Arrhenius(7.4e10, -0.37, 0.0)
-        r.low_rate = ct.Arrhenius(2.3e12, -0.9, -1700*1000*4.184)
-        r.falloff = ct.TroeFalloff((0.7346, 94, 1756, 5182))
-        r.efficiencies = {'AR':0.7, 'H2':2.0, 'H2O':6.0}
-        self.assertEqual(r.falloff.type, "Troe")
+        high_rate = ct.Arrhenius(7.4e10, -0.37, 0.0)
+        low_rate = ct.Arrhenius(2.3e12, -0.9, -1700 * 1000 * 4.184)
+        r = ct.FalloffReaction("OH:2", "H2O2:1",
+                ct.TroeRate(low_rate, high_rate, [0.7346, 94, 1756, 5182]))
+        r.efficiencies = {"AR":0.7, "H2":2.0, "H2O":6.0}
+        self.assertEqual(r.rate.type, "Troe")
 
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=self.species, reactions=[r])
@@ -1057,17 +1159,15 @@ class TestReaction(utilities.CanteraTest):
 
     def test_plog(self):
         gas1 = ct.Solution('pdep-test.yaml')
-        species = ct.Species.listFromFile('pdep-test.yaml')
+        species = ct.Species.list_from_file("pdep-test.yaml")
 
-        r = ct.PlogReaction()
-        r.reactants = {'R1A':1, 'R1B':1}
-        r.products = {'P1':1, 'H':1}
-        r.rate.rates = [
+        rate = ct.PlogRate([
             (0.01*ct.one_atm, ct.Arrhenius(1.2124e13, -0.5779, 10872.7*4184)),
             (1.0*ct.one_atm, ct.Arrhenius(4.9108e28, -4.8507, 24772.8*4184)),
             (10.0*ct.one_atm, ct.Arrhenius(1.2866e44, -9.0246, 39796.5*4184)),
             (100.0*ct.one_atm, ct.Arrhenius(5.9632e53, -11.529, 52599.6*4184))
-        ]
+        ])
+        r = ct.Reaction({"R1A":1, "R1B":1}, {"P1":1, "H":1}, rate)
 
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=species, reactions=[r])
@@ -1090,16 +1190,16 @@ class TestReaction(utilities.CanteraTest):
 
     def test_chebyshev(self):
         gas1 = ct.Solution('pdep-test.yaml')
-        species = ct.Species.listFromFile('pdep-test.yaml')
+        species = ct.Species.list_from_file("pdep-test.yaml")
 
-        r = ct.ChebyshevReaction()
-        r.reactants = 'R5:1, H:1'
-        r.products = 'P5A:1, P5B:1'
-        r.rate = ct.ChebyshevRate(Tmin=300.0, Tmax=2000.0, Pmin=1000, Pmax=10000000,
+        rate = ct.ChebyshevRate(
+            temperature_range=(300.0, 2000.0),
+            pressure_range=(1000, 10000000),
             data=[[ 5.28830e+00, -1.13970e+00, -1.20590e-01,  1.60340e-02],
                   [ 1.97640e+00,  1.00370e+00,  7.28650e-03, -3.04320e-02],
                   [ 3.17700e-01,  2.68890e-01,  9.48060e-02, -7.63850e-03],
                   [-3.12850e-02, -3.94120e-02,  4.43750e-02,  1.44580e-02]])
+        r = ct.Reaction("R5:1, H:1", "P5A:1, P5B:1", rate)
 
         gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                            species=species, reactions=[r])
@@ -1114,15 +1214,15 @@ class TestReaction(utilities.CanteraTest):
                             gas1.net_rates_of_progress[4])
 
     def test_chebyshev_single_P(self):
-        species = ct.Species.listFromFile('pdep-test.yaml')
-        r = ct.ChebyshevReaction()
-        r.reactants = 'R5:1, H:1'
-        r.products = 'P5A:1, P5B:1'
-        r.rate = ct.ChebyshevRate(Tmin=300.0, Tmax=2000.0, Pmin=1000, Pmax=10000000,
+        species = ct.Species.list_from_file("pdep-test.yaml")
+        rate = ct.ChebyshevRate(
+            temperature_range=(300.0, 2000.0),
+            pressure_range=(1000, 10000000),
             data=[[ 5.28830e+00],
                   [ 1.97640e+00],
                   [ 3.17700e-01],
                   [-3.12850e-02]])
+        r = ct.Reaction("R5:1, H:1", "P5A:1, P5B:1", rate)
 
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=species, reactions=[r])
@@ -1136,12 +1236,12 @@ class TestReaction(utilities.CanteraTest):
             self.assertNear(k1, k2)
 
     def test_chebyshev_single_T(self):
-        species = ct.Species.listFromFile('pdep-test.yaml')
-        r = ct.ChebyshevReaction()
-        r.reactants = 'R5:1, H:1'
-        r.products = 'P5A:1, P5B:1'
-        r.rate = ct.ChebyshevRate(Tmin=300.0, Tmax=2000.0, Pmin=1000, Pmax=10000000,
+        species = ct.Species.list_from_file("pdep-test.yaml")
+        rate = ct.ChebyshevRate(
+            temperature_range=(300.0, 2000.0),
+            pressure_range=(1000, 10000000),
             data=[[ 5.28830e+00, -1.13970e+00, -1.20590e-01,  1.60340e-02]])
+        r = ct.Reaction("R5:1, H:1", "P5A:1, P5B:1", rate)
 
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=species, reactions=[r])
@@ -1173,13 +1273,13 @@ class TestReaction(utilities.CanteraTest):
                            [-3.12850e-02, -3.94120e-02,  4.43750e-02,  1.44580e-02]])''')
 
     def test_chebyshev_bad_shape_yaml(self):
-        species = ct.Species.listFromFile('pdep-test.yaml')
+        species = ct.Species.list_from_file("pdep-test.yaml")
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=species, reactions=[])
 
         with self.assertRaisesRegex(ct.CanteraError, "Inconsistent"):
-            r = ct.Reaction.fromYaml('''
-                equation: R5 + H (+ M) <=> P5A + P5B (+M)
+            r = ct.Reaction.from_yaml('''
+                equation: R5 + H <=> P5A + P5B
                 type: Chebyshev
                 temperature-range: [300.0, 2000.0]
                 pressure-range: [9.86e-03 atm, 98.6 atm]
@@ -1189,9 +1289,13 @@ class TestReaction(utilities.CanteraTest):
                 - [0.3177, 0.26889, 0.094806, -7.6385e-03]
                 - [-0.031285, -0.039412, 0.044375, 0.014458]''', gas)
 
+    def test_chebyshev_deprecated_third_body(self):
+        with self.assertRaisesRegex(ct.CanteraError, "in the reaction equation"):
+            gas = ct.Solution("pdep-test.yaml", "chebyshev-deprecated")
+
     def test_BlowersMasel(self):
-        r = ct.BlowersMaselReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
-        r.rate = ct.BlowersMasel(3.87e1, 2.7, 6260*1000*4.184, 1e9*1000*4.184)
+        r = ct.Reaction({'O':1, 'H2':1}, {'H':1, 'OH':1},
+                ct.BlowersMaselRate(3.87e1, 2.7, 6260*1000*4.184, 1e9*1000*4.184))
 
         gas1 = ct.Solution('BM_test.yaml')
 
@@ -1211,28 +1315,28 @@ class TestReaction(utilities.CanteraTest):
     def test_Blowers_Masel_rate(self):
         gas = ct.Solution('BM_test.yaml')
         R = gas.reaction(0)
-        self.assertNear(R.rate(gas.T, gas.delta_enthalpy[0]),
-                        gas.forward_rate_constants[0], rtol=1e-7)
+        delta_enthalpy = gas.delta_enthalpy[0]
+        self.assertNear(R.rate(gas.T, delta_enthalpy), gas.forward_rate_constants[0], rtol=1e-7)
 
     def test_negative_A_blowersmasel(self):
         species = ct.Solution('BM_test.yaml').species()
-        r = ct.BlowersMaselReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
-        r.rate = ct.BlowersMasel(-3.87e1, 2.7, 6260*1000*4.184, 1e9)
+        r = ct.Reaction({'O':1, 'H2':1}, {'H':1, 'OH':1},
+                        ct.BlowersMaselRate(-3.87e1, 2.7, 6260*1000*4.184, 1e9))
 
-        self.assertFalse(r.allow_negative_pre_exponential_factor)
+        self.assertFalse(r.rate.allow_negative_pre_exponential_factor)
 
         with self.assertRaisesRegex(ct.CanteraError, 'negative pre-exponential'):
             gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                               species=species, reactions=[r])
 
-        r.allow_negative_pre_exponential_factor = True
+        r.rate.allow_negative_pre_exponential_factor = True
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=species, reactions=[r])
 
     def test_Blowers_Masel_change_enthalpy(self):
         gas = ct.Solution('BM_test.yaml')
         r = gas.reaction(0)
-        E0 = r.rate.intrinsic_activation_energy
+        E0 = r.rate.activation_energy
         w = r.rate.bond_energy
         A = r.rate.pre_exponential_factor
         b = r.rate.temperature_exponent
@@ -1240,10 +1344,10 @@ class TestReaction(utilities.CanteraTest):
         deltaH = gas.delta_enthalpy[0]
         E = ((w + deltaH / 2) * (vp - 2 * w + deltaH) ** 2 /
             (vp ** 2 - 4 * w ** 2 + deltaH ** 2))
-        self.assertNear(E, gas.reaction(0).rate.activation_energy(deltaH))
+        self.assertNear(E, gas.reaction(0).rate.effective_activation_energy(deltaH))
 
-        deltaH_high = 10 * gas.reaction(0).rate.intrinsic_activation_energy
-        deltaH_low = -20 * gas.reaction(0).rate.intrinsic_activation_energy
+        deltaH_high = 10 * gas.reaction(0).rate.activation_energy
+        deltaH_low = -20 * gas.reaction(0).rate.activation_energy
         index = gas.species_index('OH')
         species = gas.species('OH')
         perturbed_coeffs = species.thermo.coeffs.copy()
@@ -1252,7 +1356,7 @@ class TestReaction(utilities.CanteraTest):
         species.thermo = ct.NasaPoly2(species.thermo.min_temp, species.thermo.max_temp,
                             species.thermo.reference_pressure, perturbed_coeffs)
         gas.modify_species(index, species)
-        self.assertEqual(deltaH_high, gas.reaction(0).rate.activation_energy(deltaH_high))
+        self.assertNear(deltaH_high, gas.reaction(0).rate.effective_activation_energy(deltaH_high))
         self.assertNear(A*gas.T**b*np.exp(-deltaH_high/ct.gas_constant/gas.T), gas.forward_rate_constants[0])
 
         perturbed_coeffs = species.thermo.coeffs.copy()
@@ -1261,13 +1365,13 @@ class TestReaction(utilities.CanteraTest):
         species.thermo = ct.NasaPoly2(species.thermo.min_temp, species.thermo.max_temp,
                             species.thermo.reference_pressure, perturbed_coeffs)
         gas.modify_species(index, species)
-        self.assertEqual(0, gas.reaction(0).rate.activation_energy(deltaH_low))
+        self.assertEqual(0, gas.reaction(0).rate.effective_activation_energy(deltaH_low))
         self.assertNear(A*gas.T**b*np.exp(0/ct.gas_constant/gas.T), gas.forward_rate_constants[0])
 
     def test_interface(self):
-        surf_species = ct.Species.listFromFile('ptcombust.xml')
-        gas = ct.Solution('ptcombust.xml', 'gas')
-        surf1 = ct.Interface('ptcombust.xml', 'Pt_surf', [gas])
+        surf_species = ct.Species.list_from_file("ptcombust.yaml")
+        gas = ct.Solution("ptcombust.yaml", "gas")
+        surf1 = ct.Interface("ptcombust.yaml", "Pt_surf", [gas])
         r1 = ct.InterfaceReaction()
         r1.reactants = 'H(S):2'
         r1.products = 'H2:1, PT(S):2'
@@ -1322,8 +1426,7 @@ class TestReaction(utilities.CanteraTest):
     def test_modify_invalid(self):
         # different reaction type
         tbr = self.gas.reaction(0)
-        R2 = ct.ElementaryReaction(tbr.reactants, tbr.products)
-        R2.rate = tbr.rate
+        R2 = ct.Reaction(tbr.reactants, tbr.products, tbr.rate)
         with self.assertRaisesRegex(ct.CanteraError, 'types are different'):
             self.gas.modify_reaction(0, R2)
 
@@ -1374,15 +1477,13 @@ class TestReaction(utilities.CanteraTest):
         gas = ct.Solution('gri30.yaml', transport_model=None)
         gas.TPX = 1100, 3 * ct.one_atm, 'CH4:1.0, O2:0.4, CO2:0.1, H2O:0.05'
         r0 = gas.reaction(11)
-        self.assertEqual(r0.falloff.type, "Lindemann")
+        self.assertEqual(r0.rate.type, "Lindemann")
         # these two reactions happen to have the same third-body efficiencies
         r1 = gas.reaction(49)
         r2 = gas.reaction(53)
-        self.assertEqual(r2.falloff.type, "Troe")
+        self.assertEqual(r2.rate.type, "Troe")
         self.assertEqual(r1.efficiencies, r2.efficiencies)
-        r2.high_rate = r1.high_rate
-        r2.low_rate = r1.low_rate
-        r2.falloff = r1.falloff
+        r2.rate = r1.rate
 
         gas.modify_reaction(53, r2)
         kf = gas.forward_rate_constants
@@ -1415,8 +1516,8 @@ class TestReaction(utilities.CanteraTest):
 
         r1 = gas.reaction(4)
         r2 = gas.reaction(5)
-        r1.rate = ct.ChebyshevRate(r2.rate.Tmin, r2.rate.Tmax,
-                                   r2.rate.Pmin, r2.rate.Pmax, r2.rate.coeffs)
+        r1.rate = ct.ChebyshevRate(
+            r2.rate.temperature_range, r2.rate.pressure_range, r2.rate.data)
 
         # rates should be different before calling 'modify_reaction'
         kf = gas.forward_rate_constants
@@ -1431,26 +1532,27 @@ class TestReaction(utilities.CanteraTest):
         gas.X = 'H2:0.1, H2O:0.2, O2:0.7, O:1e-4, OH:1e-5, H:2e-5'
         gas.TP = self.gas.TP
         R = gas.reaction(0)
+        delta_enthalpy = gas.delta_enthalpy[0]
         A1 = R.rate.pre_exponential_factor
         b1 = R.rate.temperature_exponent
-        Ta1 = R.rate.activation_energy(gas.delta_enthalpy[0]) / ct.gas_constant
+        Ta1 = R.rate.effective_activation_energy(delta_enthalpy) / ct.gas_constant
         T = gas.T
-        self.assertNear(A1* T ** b1 * np.exp(- Ta1 / T),
-                        gas.forward_rate_constants[0])
+        self.assertNear(A1 * T**b1 * np.exp(-Ta1 / T), gas.forward_rate_constants[0])
 
         # randomly modify the rate parameters of a Blowers-Masel reaction
         A2 = 1.5 * A1
         b2 = b1 + 0.1
-        Ta_intrinsic = R.rate.intrinsic_activation_energy * 1.2
+        Ta_intrinsic = R.rate.activation_energy * 1.2
         w = R.rate.bond_energy * 0.8
-        R.rate = ct.BlowersMasel(A2, b2, Ta_intrinsic, w)
-        Ta2 = R.rate.activation_energy(gas.delta_enthalpy[0]) / ct.gas_constant
+        R.rate = ct.BlowersMaselRate(A2, b2, Ta_intrinsic, w)
+        delta_enthalpy = gas.delta_enthalpy[0]
+        Ta2 = R.rate.effective_activation_energy(delta_enthalpy) / ct.gas_constant
         gas.modify_reaction(0, R)
-        self.assertNear(A2*T**b2*np.exp(-Ta2/T), gas.forward_rate_constants[0])
+        self.assertNear(A2 * T**b2 * np.exp(-Ta2 / T), gas.forward_rate_constants[0])
 
     def test_modify_interface(self):
-        gas = ct.Solution('ptcombust.xml', 'gas')
-        surf = ct.Interface('ptcombust.xml', 'Pt_surf', [gas])
+        gas = ct.Solution("ptcombust.yaml", "gas")
+        surf = ct.Interface("ptcombust.yaml", "Pt_surf", [gas])
         surf.coverages = 'O(S):0.1, PT(S):0.5, H(S):0.4'
         gas.TP = surf.TP
 
@@ -1469,8 +1571,8 @@ class TestReaction(utilities.CanteraTest):
         self.assertNear(k2, k3)
 
     def test_modify_sticking(self):
-        gas = ct.Solution('ptcombust.xml', 'gas')
-        surf = ct.Interface('ptcombust.xml', 'Pt_surf', [gas])
+        gas = ct.Solution("ptcombust.yaml", "gas")
+        surf = ct.Interface("ptcombust.yaml", "Pt_surf", [gas])
         surf.coverages = 'O(S):0.1, PT(S):0.5, H(S):0.4'
         gas.TP = surf.TP
 
@@ -1484,14 +1586,14 @@ class TestReaction(utilities.CanteraTest):
 
     def test_motz_wise(self):
         # Motz & Wise off for all reactions
-        gas1 = ct.Solution('ptcombust.xml', 'gas')
-        surf1 = ct.Interface('ptcombust.xml', 'Pt_surf', [gas1])
+        gas1 = ct.Solution("ptcombust.yaml", "gas")
+        surf1 = ct.Interface("ptcombust.yaml", "Pt_surf", [gas1])
         surf1.coverages = 'O(S):0.1, PT(S):0.5, H(S):0.4'
         gas1.TP = surf1.TP
 
         # Motz & Wise correction on for some reactions
-        gas2 = ct.Solution('ptcombust-motzwise.cti', 'gas')
-        surf2 = ct.Interface('ptcombust-motzwise.cti', 'Pt_surf', [gas2])
+        gas2 = ct.Solution("ptcombust-motzwise.yaml", "gas")
+        surf2 = ct.Interface("ptcombust-motzwise.yaml", "Pt_surf", [gas2])
         surf2.TPY = surf1.TPY
 
         k1 = surf1.forward_rate_constants

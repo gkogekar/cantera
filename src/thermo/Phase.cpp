@@ -26,6 +26,7 @@ Phase::Phase() :
     m_xml(new XML_Node("phase")),
     m_id("<phase>"),
     m_temp(0.001),
+    m_electronTemp(0.001),
     m_dens(0.001),
     m_mmw(0.0),
     m_stateNum(-1),
@@ -349,7 +350,7 @@ void Phase::setMoleFractions(const double* const x)
         sum += m_molwts[k] * xk;
     }
 
-    // Set m_ym_ to the normalized mole fractions divided by the normalized mean
+    // Set m_ym to the normalized mole fractions divided by the normalized mean
     // molecular weight:
     //     m_ym_k = X_k / (sum_k X_k M_k)
     const double invSum = 1.0/sum;
@@ -751,11 +752,10 @@ size_t Phase::addElement(const std::string& symbol, doublereal weight,
     // Try to look up the standard entropy if not given. Fail silently.
     if (entropy298 == ENTROPY298_UNKNOWN) {
         try {
-            XML_Node* db = get_XML_File("elements.xml");
-            XML_Node* elnode = db->findByAttr("name", symbol);
-            if (elnode && elnode->hasChild("entropy298")) {
-                entropy298 = fpValueCheck(elnode->child("entropy298")["value"]);
-            }
+            const static AnyMap db = AnyMap::fromYamlFile(
+                "element-standard-entropies.yaml");
+            const AnyMap& elem = db["elements"].getMapWhere("symbol", symbol);
+            entropy298 = elem.convert("entropy298", "J/kmol/K", ENTROPY298_UNKNOWN);
         } catch (CanteraError&) {
         }
     }
@@ -983,6 +983,7 @@ bool Phase::ready() const
 }
 
 void Phase::invalidateCache() {
+    m_stateNum++;
     m_cache.clear();
 }
 
@@ -1001,7 +1002,8 @@ void Phase::compositionChanged() {
 }
 
 void Phase::setRoot(std::shared_ptr<Solution> root) {
-    m_root = root;
+    warn_deprecated("Phase::setRoot",
+                    "This function has no effect. To be removed after Cantera 2.6.");
 }
 
 vector_fp Phase::getCompositionFromMap(const compositionMap& comp) const

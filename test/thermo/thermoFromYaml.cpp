@@ -5,6 +5,7 @@
 #include "cantera/thermo/MolalityVPSSTP.h"
 #include "cantera/thermo/IdealGasPhase.h"
 #include "cantera/thermo/SurfPhase.h"
+#include "cantera/thermo/EdgePhase.h"
 #include <fstream>
 
 using namespace Cantera;
@@ -109,6 +110,13 @@ TEST(ThermoFromYaml, EdgePhase)
     EXPECT_EQ(thermo->nSpecies(), (size_t) 1);
     auto edge = std::dynamic_pointer_cast<SurfPhase>(thermo);
     EXPECT_DOUBLE_EQ(edge->siteDensity(), 5e-18);
+}
+
+TEST(ThermoFromYaml, EdgePhase_direct)
+{
+    EdgePhase tpb("surface-phases.yaml", "TPB");
+    EXPECT_EQ(tpb.nSpecies(), (size_t) 1);
+    EXPECT_DOUBLE_EQ(tpb.siteDensity(), 5e-18);
 }
 
 TEST(ThermoFromYaml, WaterSSTP)
@@ -383,6 +391,28 @@ TEST(ThermoFromYaml, IdealSolidSolnPhase)
     EXPECT_NEAR(thermo->density(), 10.1787080, 1e-6);
     EXPECT_NEAR(thermo->enthalpy_mass(), -15642788.8547624, 1e-4);
     EXPECT_NEAR(thermo->gibbs_mole(), -313642312.7114608, 1e-4);
+
+    // Test that molar enthalpy equals sum(h_k*X_k). Test first at default 
+    // pressure:
+    double h_avg = 0;
+    size_t N = thermo->nSpecies();
+    vector_fp X_k(N);
+    vector_fp h_k(N);
+    thermo->getMoleFractions(X_k.data());
+    thermo->getPartialMolarEnthalpies(h_k.data());
+    for (size_t k = 0; k < N; k++) {
+        h_avg += X_k[k]*h_k[k];
+    }
+    EXPECT_NEAR(thermo->enthalpy_mole(), h_avg, 1e-6);
+
+    // Now test the pressure dependence, by repeating at 2 atm:
+    thermo->setState_TP(298, 2*OneAtm);
+    thermo->getPartialMolarEnthalpies(h_k.data());
+    h_avg = 0;
+    for (size_t k = 0; k < N; k++) {
+        h_avg += X_k[k]*h_k[k];
+    }
+    EXPECT_NEAR(thermo->enthalpy_mole(), h_avg, 1e-6);
 }
 
 TEST(ThermoFromYaml, Lattice)

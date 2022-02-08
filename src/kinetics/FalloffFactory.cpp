@@ -1,5 +1,8 @@
 /**
  *  @file FalloffFactory.cpp
+ *
+ *  @deprecated  Deprecated in Cantera 2.6 and removed thereafter. Replaced by
+ *      FalloffRate objects managed by MultiRate evaluators.
  */
 
 // This file is part of Cantera. See License.txt in the top-level directory or
@@ -16,10 +19,11 @@ std::mutex FalloffFactory::falloff_mutex;
 
 FalloffFactory::FalloffFactory()
 {
-    reg("Lindemann", []() { return new Falloff(); });
+    reg("Lindemann", []() { return new Lindemann(); });
     addAlias("Lindemann", "Simple");
     reg("Troe", []() { return new Troe(); });
     reg("SRI", []() { return new SRI(); });
+    reg("Tsang", []() { return new Tsang(); });
 }
 
 Falloff* FalloffFactory::newFalloff(const std::string& type, const vector_fp& c)

@@ -6,50 +6,188 @@
 cdef dict _reaction_class_registry = {}
 
 
-cdef class _ReactionRate:
+# dictionary to store reaction rate classes
+cdef dict _reaction_rate_class_registry = {}
+
+
+cdef class ReactionRate:
     """
     Base class for ReactionRate objects.
 
     ReactionRate objects are used to calculate reaction rates and are associated
     with a Reaction object.
     """
+    _reaction_rate_type = ""
 
     def __repr__(self):
-        return f"<{pystr(self.base.type())} at {id(self):0x}>"
+        return f"<{type(self).__name__} at {id(self):0x}>"
 
-    def __call__(self, double temperature, pressure=None):
+    def __call__(self, double temperature):
         """
-        Evaluate rate expression based on temperature and pressure. For rate
-        expressions that are dependent of pressure, an omission of pressure
-        will raise an exception.
+        Evaluate rate expression based on temperature.
         """
-        if pressure:
-            self.base.update(temperature, pressure)
-            return self.base.eval(temperature, pressure)
-        else:
-            self.base.update(temperature)
-            return self.base.eval(temperature)
+        return self.rate.eval(temperature)
 
-    def ddT(self, double temperature, pressure=None):
+    property type:
+        """ Get the C++ ReactionRate type """
+        def __get__(self):
+            return pystr(self.rate.type())
+
+    @staticmethod
+    cdef wrap(shared_ptr[CxxReactionRate] rate):
         """
-        Evaluate derivative of rate expression with respect to temperature.
+        Wrap a C++ Reaction object with a Python object of the correct derived type.
         """
-        if pressure:
-            self.base.update(temperature, pressure)
-            return self.base.ddT(temperature, pressure)
-        else:
-            self.base.update(temperature)
-            return self.base.ddT(temperature)
+        # ensure all reaction types are registered
+        if not _reaction_rate_class_registry:
+            def register_subclasses(cls):
+                for c in cls.__subclasses__():
+                    rate_type = getattr(c, "_reaction_rate_type")
+                    _reaction_rate_class_registry[rate_type] = c
+                    register_subclasses(c)
+
+            # update global reaction class registry
+            register_subclasses(ReactionRate)
+
+        # identify class
+        rate_type = pystr(rate.get().type())
+        cls = _reaction_rate_class_registry.get(rate_type, ReactionRate)
+
+        # wrap C++ reaction rate
+        cdef ReactionRate rr
+        rr = cls(init=False)
+        rr._rate = rate
+        rr.set_cxx_object()
+        return rr
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+
+    @classmethod
+    def from_dict(cls, data):
+        """
+        Create a `ReactionRate` object from a dictionary corresponding to its YAML
+        representation.
+
+        An example for the creation of a `ReactionRate` from a dictionary is::
+
+            rate = ReactionRate.from_dict(
+                {"rate-constant": {"A": 38.7, "b": 2.7, "Ea": 26191840.0}})
+
+        :param data:
+            A dictionary corresponding to the YAML representation.
+        """
+        if cls._reaction_rate_type != "":
+            raise TypeError(
+                f"Class method 'from_dict' was invoked from '{cls.__name__}' but "
+                "should be called from base class 'ReactionRate'")
+
+        cdef CxxAnyMap any_map = dict_to_anymap(data)
+        cxx_rate = CxxNewReactionRate(any_map)
+        return ReactionRate.wrap(cxx_rate)
+
+    @classmethod
+    def from_yaml(cls, text):
+        """
+        Create a `ReactionRate` object from its YAML string representation.
+
+        An example for the creation of a `ReactionRate` from a YAML string is::
+
+            rate = ReactionRate.from_yaml(
+                "rate-constant: {A: 38.7, b: 2.7, Ea: 6260.0 cal/mol}")
+
+        Units for ``A`` require a unit system with length in ``m`` and quantity in
+        ``kmol`` (standard Cantera units).
+
+        :param text:
+            The YAML reaction rate string.
+        """
+        if cls._reaction_rate_type != "":
+            raise TypeError(
+                f"Class method 'from_yaml' was invoked from '{cls.__name__}' but "
+                "should be called from base class 'ReactionRate'")
+
+        cdef CxxAnyMap any_map
+        any_map = AnyMapFromYamlString(stringify(text))
+        cxx_rate = CxxNewReactionRate(any_map)
+        return ReactionRate.wrap(cxx_rate)
 
     property input_data:
         """
         Get input data for this reaction rate with its current parameter values.
         """
         def __get__(self):
-            return anymap_to_dict(self.base.parameters())
+            return anymap_to_dict(self.rate.parameters())
 
 
-cdef class ArrheniusRate(_ReactionRate):
+cdef class ArrheniusTypeRate(ReactionRate):
+    """
+    Base class collecting commonly used features of Arrhenius-type rate objects.
+    Objects should be instantiated by specialized classes, for example `ArrheniusRate`,
+    `BlowersMaselRate` and `TwoTempPlasmaRate`.
+    """
+    _reaction_rate_type = None
+
+    def _cinit(self, input_data, **kwargs):
+        """
+        Helper function called by __cinit__. The method is used as a uniform interface
+        for object construction. A separate method is necessary as Cython does not
+        support overloading of special methods such as __cinit__.
+        """
+        if self._reaction_rate_type is None:
+            raise TypeError(
+                f"Base class '{self.__class__.__name__}' cannot be instantiated "
+                "by itself; use specialized rate constructors instead.")
+
+        if isinstance(input_data, dict):
+            self._from_dict(input_data)
+        elif all([kwargs[k] is not None for k in kwargs]):
+            self._from_parameters(*[kwargs[k] for k in kwargs])
+        elif all([kwargs[k] is None for k in kwargs]) and input_data is None:
+            self._from_dict({})
+        elif input_data:
+            raise TypeError("Invalid parameter 'input_data'")
+        else:
+            par_list = [f"'{k}'" for k in kwargs]
+            par_string = ", ".join(par_list[:-1])
+            par_string += f" or {par_list[-1]}"
+            raise TypeError(f"Invalid parameters {par_string}")
+        self.set_cxx_object()
+
+    property pre_exponential_factor:
+        """
+        The pre-exponential factor ``A`` in units of m, kmol, and s raised to
+        powers depending on the reaction order.
+        """
+        def __get__(self):
+            return self.base.preExponentialFactor()
+
+    property temperature_exponent:
+        """
+        The temperature exponent ``b``.
+        """
+        def __get__(self):
+            return self.base.temperatureExponent()
+
+    property activation_energy:
+        """
+        The activation energy ``E`` [J/kmol].
+        """
+        def __get__(self):
+            return self.base.activationEnergy()
+
+    property allow_negative_pre_exponential_factor:
+        """
+        Get/Set whether the rate coefficient is allowed to have a negative
+        pre-exponential factor.
+        """
+        def __get__(self):
+            return self.base.allowNegativePreExponentialFactor()
+        def __set__(self, cbool allow):
+            self.base.setAllowNegativePreExponentialFactor(allow)
+
+
+cdef class ArrheniusRate(ArrheniusTypeRate):
     r"""
     A reaction rate coefficient which depends on temperature only and follows
     the modified Arrhenius form:
@@ -58,59 +196,198 @@ cdef class ArrheniusRate(_ReactionRate):
 
         k_f = A T^b \exp{-\tfrac{E}{RT}}
 
-    where *A* is the `pre_exponential_factor`, *b* is the `temperature_exponent`,
-    and *Ea* is the `activation_energy`.
+    where ``A`` is the `pre_exponential_factor`, ``b`` is the `temperature_exponent`,
+    and ``Ea`` is the `activation_energy`.
     """
+    _reaction_rate_type = "Arrhenius"
+
     def __cinit__(self, A=None, b=None, Ea=None, input_data=None, init=True):
 
         if init:
+            self._cinit(input_data, A=A, b=b, Ea=Ea)
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxArrheniusRate(dict_to_anymap(input_data)))
+
+    def _from_parameters(self, A, b, Ea):
+        self._rate.reset(new CxxArrheniusRate(A, b, Ea))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        # CxxArrheniusBase does not have a common base with CxxReactionRate
+        self.base = <CxxArrheniusBase*>self.cxx_object()
+
+    cdef CxxArrheniusRate* cxx_object(self):
+        return <CxxArrheniusRate*>self.rate
+
+
+cdef class BlowersMaselRate(ArrheniusTypeRate):
+    r"""
+    A reaction rate coefficient which depends on temperature and enthalpy change
+    of the reaction follows the Blowers-Masel approximation and modified Arrhenius form
+    described in `ArrheniusRate`.
+    """
+    _reaction_rate_type = "Blowers-Masel"
+
+    def __cinit__(self, A=None, b=None, Ea0=None, w=None, input_data=None, init=True):
+
+        if init:
+            self._cinit(input_data, A=A, b=b, Ea0=Ea0, w=w)
+
+    def __call__(self, double temperature, double deltaH):
+        """
+        Evaluate rate expression based on temperature and enthalpy change of reaction.
+        """
+        return self.rate.eval(temperature, deltaH)
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxBlowersMaselRate(dict_to_anymap(input_data)))
+
+    def _from_parameters(self, A, b, Ea0, w):
+        self._rate.reset(new CxxBlowersMaselRate(A, b, Ea0, w))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        # CxxArrheniusBase does not have a common base with CxxReactionRate
+        self.base = <CxxArrheniusBase*>self.cxx_object()
+
+    cdef CxxBlowersMaselRate* cxx_object(self):
+        return <CxxBlowersMaselRate*>self.rate
+
+    def effective_activation_energy(self, double deltaH):
+        """
+        The effective activation energy ``E`` [J/kmol], based on enthalpy change of
+        reaction ``deltaH`` (in [J/kmol])
+        """
+        return self.cxx_object().effectiveActivationEnergy(deltaH)
+
+    property bond_energy:
+        """
+        Average bond dissociation energy of the bond being formed and broken
+        in the reaction ``E`` [J/kmol].
+        """
+        def __get__(self):
+            return self.cxx_object().bondEnergy()
+
+
+cdef class TwoTempPlasmaRate(ArrheniusTypeRate):
+    r"""
+    A reaction rate coefficient which depends on both gas and electron temperature
+    with the form similar to the modified Arrhenius form. Specifically, the temperature
+    exponent (b) is applied to the electron temperature instead. In addition, the
+    exponential term with activation energy for electron is included.
+
+    .. math::
+
+        k_f = A T_e^b \exp{-\tfrac{E_{a,g}}{RT}} \exp{-\tfrac{E_{a,e}}{RT_e}}
+
+    where :math:`A` is the `pre_exponential_factor`, :math:`b` is the
+    `temperature_exponent`, :math:`E_{a,g}` is the `activation_energy`, and
+    :math:`E_{a,e}` is the `activation_electron_energy`.
+    """
+    _reaction_rate_type = "two-temperature-plasma"
+
+    def __cinit__(self, A=None, b=None, Ea_gas=0.0, Ea_electron=0.0,
+            input_data=None, init=True):
+        if init:
+            self._cinit(input_data, A=A, b=b, Ea_gas=Ea_gas, Ea_electron=Ea_electron)
+
+    def __call__(self, double temperature, double elec_temp):
+        """
+        Evaluate rate expression based on temperature and enthalpy change of reaction.
+        """
+        return self.rate.eval(temperature, elec_temp)
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxTwoTempPlasmaRate(dict_to_anymap(input_data)))
+
+    def _from_parameters(self, A, b, Ea_gas, Ea_electron):
+        self._rate.reset(new CxxTwoTempPlasmaRate(A, b, Ea_gas, Ea_electron))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        # CxxArrheniusBase does not have a common base with CxxReactionRate
+        self.base = <CxxArrheniusBase*>self.cxx_object()
+
+    cdef CxxTwoTempPlasmaRate* cxx_object(self):
+        return <CxxTwoTempPlasmaRate*>self.rate
+
+    property activation_electron_energy:
+        """
+        The activation electron energy :math:`E_{a,e}` [J/kmol].
+        """
+        def __get__(self):
+            return self.cxx_object().activationElectronEnergy()
+
+
+cdef class FalloffRate(ReactionRate):
+    """
+    Base class for parameterizations used to describe the fall-off in reaction rates
+    due to intermolecular energy transfer. These objects are used by `FalloffReaction`.
+    Note that `FalloffRate` is a base class for specialized fall-off parameterizations
+    and cannot be instantiated by itself.
+    """
+
+    _reaction_rate_type = None
+
+    def __cinit__(self, low=None, high=None, falloff_coeffs=None, input_data=None, init=True):
+
+        if self._reaction_rate_type is None:
+            raise TypeError(
+                f"Base class '{self.__class__.__name__}' cannot be instantiated "
+                "by itself; use specialized fall-off rate instead.")
+
+        if init:
             if isinstance(input_data, dict):
-                self._base.reset(new CxxArrheniusRate(dict_to_anymap(input_data)))
-            elif all([arg is not None for arg in [A, b, Ea]]):
-                self._base.reset(new CxxArrheniusRate(A, b, Ea))
-            elif all([arg is None for arg in [A, b, Ea, input_data]]):
-                self._base.reset(new CxxArrheniusRate(dict_to_anymap({})))
-            elif input_data:
-                raise TypeError("Invalid parameter 'input_data'")
+                self._from_dict(input_data)
+            elif input_data is None:
+                self._from_dict({})
             else:
-                raise TypeError("Invalid parameters 'A', 'b' or 'Ea'")
-            self.base = self._base.get()
-            self.rate = <CxxArrheniusRate*>(self.base)
+                raise TypeError("Invalid input parameters")
+            self.set_cxx_object()
 
-    @staticmethod
-    cdef wrap(shared_ptr[CxxReactionRateBase] rate):
-        """
-        Wrap a C++ ReactionRateBase object with a Python object.
-        """
-        # wrap C++ reaction
-        cdef ArrheniusRate arr
-        arr = ArrheniusRate(init=False)
-        arr._base = rate
-        arr.base = arr._base.get()
-        arr.rate = <CxxArrheniusRate*>(arr.base)
-        return arr
+            if (low is not None) and (high is not None):
+                self.low_rate = low
+                self.high_rate = high
+                if falloff_coeffs is None:
+                    falloff_coeffs = ()
+                self.falloff_coeffs = falloff_coeffs
 
-    property pre_exponential_factor:
+    def __call__(self, double temperature, double concm):
         """
-        The pre-exponential factor *A* in units of m, kmol, and s raised to
-        powers depending on the reaction order.
+        Evaluate rate expression based on temperature and third-body concentration.
         """
+        return self.rate.eval(temperature, concm)
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        self.falloff = <CxxFalloffRate*>self.rate
+
+    property low_rate:
+        """ Get/Set the `Arrhenius` rate constant in the low-pressure limit """
         def __get__(self):
-            return self.rate.preExponentialFactor()
+            return Arrhenius.wrap(&(self.falloff.lowRate()))
+        def __set__(self, Arrhenius rate):
+            self.falloff.setLowRate(deref(rate.base))
 
-    property temperature_exponent:
-        """
-        The temperature exponent *b*.
-        """
+    property high_rate:
+        """ Get/Set the `Arrhenius` rate constant in the high-pressure limit """
         def __get__(self):
-            return self.rate.temperatureExponent()
+            return Arrhenius.wrap(&(self.falloff.highRate()))
+        def __set__(self, Arrhenius rate):
+            self.falloff.setHighRate(deref(rate.base))
 
-    property activation_energy:
-        """
-        The activation energy *E* [J/kmol].
-        """
+    property falloff_coeffs:
+        """ The array of coefficients used to define this falloff function. """
         def __get__(self):
-            return self.rate.activationEnergy()
+            cdef vector[double] cxxdata
+            self.falloff.getFalloffCoeffs(cxxdata)
+            return np.fromiter(cxxdata, np.double)
+        def __set__(self, data):
+            cdef vector[double] cxxdata
+            for c in data:
+                cxxdata.push_back(c)
+            self.falloff.setFalloffCoeffs(cxxdata)
 
     property allow_negative_pre_exponential_factor:
         """
@@ -118,16 +395,101 @@ cdef class ArrheniusRate(_ReactionRate):
         pre-exponential factor.
         """
         def __get__(self):
-            return self.rate.allow_negative_pre_exponential_factor
-        def __set__(self, allow):
-            self.rate.allow_negative_pre_exponential_factor = allow
+            return self.falloff.allowNegativePreExponentialFactor()
+        def __set__(self, cbool allow):
+            self.falloff.setAllowNegativePreExponentialFactor(allow)
+
+    property chemically_activated:
+        """
+        Get whether the object is a chemically-activated reaction rate.
+        """
+        def __get__(self):
+            return self.falloff.chemicallyActivated()
+        def __set__(self, cbool activated):
+            self.falloff.setChemicallyActivated(activated)
+
+    def falloff_function(self, double temperature, conc3b=None):
+        """
+        Evaluate the falloff function
+        """
+        if conc3b is None:
+            conc3b = self.third_body_concentration
+        return self.falloff.evalF(temperature, conc3b)
 
 
-cdef class PlogRate(_ReactionRate):
+cdef class LindemannRate(FalloffRate):
+    r"""
+    The Lindemann falloff parameterization.
+
+    This class implements the simple falloff function :math:`F(T,P_r) = 1.0`.
+    """
+    _reaction_rate_type = "Lindemann"
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxLindemannRate(dict_to_anymap(input_data)))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        self.falloff = <CxxFalloffRate*>self.rate
+
+
+cdef class TroeRate(FalloffRate):
+    r"""
+    The 3- or 4-parameter Troe falloff function.
+
+    :param falloff_coeffs:
+        An array of 3 or 4 parameters: :math:`[a, T^{***}, T^*, T^{**}]` where
+        the final parameter is optional (with a default value of 0).
+    """
+    _reaction_rate_type = "Troe"
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxTroeRate(dict_to_anymap(input_data)))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        self.falloff = <CxxFalloffRate*>self.rate
+
+
+cdef class SriRate(FalloffRate):
+    r"""
+    The 3- or 5-parameter SRI falloff function.
+
+    :param falloff_coeffs:
+        An array of 3 or 5 parameters: :math:`[a, b, c, d, e]` where the last
+        two parameters are optional (with default values of 1 and 0, respectively).
+    """
+    _reaction_rate_type = "SRI"
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxSriRate(dict_to_anymap(input_data)))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        self.falloff = <CxxFalloffRate*>self.rate
+
+
+cdef class TsangRate(FalloffRate):
+    r"""
+    The Tsang falloff parameterization.
+    """
+    _reaction_rate_type = "Tsang"
+
+    def _from_dict(self, dict input_data):
+        self._rate.reset(new CxxTsangRate(dict_to_anymap(input_data)))
+
+    cdef set_cxx_object(self):
+        self.rate = self._rate.get()
+        self.falloff = <CxxFalloffRate*>self.rate
+
+
+cdef class PlogRate(ReactionRate):
     r"""
     A pressure-dependent reaction rate parameterized by logarithmically
     interpolating between Arrhenius rate expressions at various pressures.
     """
+    _reaction_rate_type = "pressure-dependent-Arrhenius"
+
     def __cinit__(self, rates=None, input_data=None, init=True):
 
         if init and isinstance(rates, list):
@@ -135,28 +497,23 @@ cdef class PlogRate(_ReactionRate):
 
         elif init:
             if isinstance(input_data, dict):
-                self._base.reset(new CxxPlogRate(dict_to_anymap(input_data)))
+                self._rate.reset(new CxxPlogRate(dict_to_anymap(input_data)))
             elif rates is None:
-                self._base.reset(new CxxPlogRate(dict_to_anymap({})))
+                self._rate.reset(new CxxPlogRate(dict_to_anymap({})))
             elif input_data:
                 raise TypeError("Invalid parameter 'input_data'")
             else:
                 raise TypeError("Invalid parameter 'rates'")
-            self.base = self._base.get()
-            self.rate = <CxxPlogRate*>(self.base)
+            self.set_cxx_object()
 
-    @staticmethod
-    cdef wrap(shared_ptr[CxxReactionRateBase] rate):
+    def __call__(self, double temperature, double pressure):
         """
-        Wrap a C++ ReactionRateBase object with a Python object.
+        Evaluate rate expression based on temperature and pressure.
         """
-        # wrap C++ reaction
-        cdef PlogRate arr
-        arr = PlogRate(init=False)
-        arr._base = rate
-        arr.base = arr._base.get()
-        arr.rate = <CxxPlogRate*>(arr.base)
-        return arr
+        return self.rate.eval(temperature, pressure)
+
+    cdef CxxPlogRate* cxx_object(self):
+        return <CxxPlogRate*>self.rate
 
     property rates:
         """
@@ -165,56 +522,67 @@ cdef class PlogRate(_ReactionRate):
         """
         def __get__(self):
             rates = []
-            cdef vector[pair[double, CxxArrhenius]] cxxrates = self.rate.rates()
-            cdef pair[double, CxxArrhenius] p_rate
+            cdef multimap[double, CxxArrheniusBase] cxxrates
+            cdef pair[double, CxxArrheniusBase] p_rate
+            cxxrates = self.cxx_object().getRates()
             for p_rate in cxxrates:
-                rates.append((p_rate.first, copyArrhenius(&p_rate.second)))
+                rates.append((p_rate.first, copyArrheniusBase(&p_rate.second)))
             return rates
 
         def __set__(self, rates):
-            cdef multimap[double, CxxArrhenius] ratemap
+            cdef multimap[double, CxxArrheniusBase] ratemap
             cdef Arrhenius rate
-            cdef pair[double, CxxArrhenius] item
+            cdef pair[double, CxxArrheniusBase] item
             for p, rate in rates:
                 item.first = p
-                item.second = deref(rate.rate)
+                item.second = deref(rate.base)
                 ratemap.insert(item)
 
-            self._base.reset(new CxxPlogRate(ratemap))
-            self.base = self._base.get()
-            self.rate = <CxxPlogRate*>(self.base)
+            self._rate.reset(new CxxPlogRate(ratemap))
+            self.rate = self._rate.get()
 
 
-cdef class ChebyshevRate(_ReactionRate):
+cdef class ChebyshevRate(ReactionRate):
     r"""
     A pressure-dependent reaction rate parameterized by a bivariate Chebyshev
     polynomial in temperature and pressure.
     """
-    def __cinit__(self, Tmin=None, Tmax=None, Pmin=None, Pmax=None, data=None,
+    _reaction_rate_type = "Chebyshev"
+
+    def __cinit__(self, temperature_range=None, pressure_range=None, data=None,
                   input_data=None, init=True):
 
         if init:
             if isinstance(input_data, dict):
-                self._base.reset(new CxxChebyshevRate3(dict_to_anymap(input_data)))
-            elif all([arg is not None for arg in [Tmin, Tmax, Pmin, Pmax, data]]):
-                self._setup(Tmin, Tmax, Pmin, Pmax, data)
-                return
+                self._rate.reset(new CxxChebyshevRate(dict_to_anymap(input_data)))
+            elif all([arg is not None
+                    for arg in [temperature_range, pressure_range, data]]):
+                Tmin = temperature_range[0]
+                Tmax = temperature_range[1]
+                Pmin = pressure_range[0]
+                Pmax = pressure_range[1]
+                self._rate.reset(
+                    new CxxChebyshevRate(Tmin, Tmax, Pmin, Pmax, self._cxxarray2d(data)))
             elif all([arg is None
-                    for arg in [Tmin, Tmax, Pmin, Pmax, data, input_data]]):
-                self._base.reset(new CxxChebyshevRate3(dict_to_anymap({})))
+                    for arg in [temperature_range, pressure_range, data, input_data]]):
+                self._rate.reset(new CxxChebyshevRate(dict_to_anymap({})))
             elif input_data:
                 raise TypeError("Invalid parameter 'input_data'")
             else:
                 raise TypeError("Invalid parameters")
-            self.base = self._base.get()
-            self.rate = <CxxChebyshevRate3*>(self.base)
+            self.set_cxx_object()
 
-    def _setup(self, Tmin, Tmax, Pmin, Pmax, coeffs):
+    def __call__(self, double temperature, double pressure):
         """
-        Simultaneously set values for `Tmin`, `Tmax`, `Pmin`, `Pmax`, and
-        `coeffs`.
+        Evaluate rate expression based on temperature and pressure.
         """
+        return self.rate.eval(temperature, pressure)
+
+    cdef CxxArray2D _cxxarray2d(self, coeffs):
+        """ Internal function to assign coefficient matrix values """
         cdef CxxArray2D data
+        if isinstance(coeffs, np.ndarray):
+            coeffs = coeffs.tolist()
         data.resize(len(coeffs), len(coeffs[0]))
         cdef double value
         cdef int i
@@ -223,63 +591,49 @@ cdef class ChebyshevRate(_ReactionRate):
             for j,value in enumerate(row):
                 CxxArray2D_set(data, i, j, value)
 
-        self._base.reset(new CxxChebyshevRate3(Tmin, Tmax, Pmin, Pmax, data))
-        self.base = self._base.get()
-        self.rate = <CxxChebyshevRate3*>(self.base)
+        return data
 
-    @staticmethod
-    cdef wrap(shared_ptr[CxxReactionRateBase] rate):
-        """
-        Wrap a C++ ReactionRateBase object with a Python object.
-        """
-        # wrap C++ reaction
-        cdef ChebyshevRate arr
-        arr = ChebyshevRate(init=False)
-        arr._base = rate
-        arr.base = arr._base.get()
-        arr.rate = <CxxChebyshevRate3*>(arr.base)
-        return arr
+    cdef CxxChebyshevRate* cxx_object(self):
+        return <CxxChebyshevRate*>self.rate
 
-    property Tmin:
-        """ Minimum temperature [K] for the Chebyshev fit """
+    property temperature_range:
+        """ Valid temperature range [K] for the Chebyshev fit """
         def __get__(self):
-            return self.rate.Tmin()
+            return self.cxx_object().Tmin(), self.cxx_object().Tmax()
 
-    property Tmax:
-        """ Maximum temperature [K] for the Chebyshev fit """
+    property pressure_range:
+        """ Valid pressure range [Pa] for the Chebyshev fit """
         def __get__(self):
-            return self.rate.Tmax()
-
-    property Pmin:
-        """ Minimum pressure [Pa] for the Chebyshev fit """
-        def __get__(self):
-            return self.rate.Pmin()
-
-    property Pmax:
-        """ Maximum pressure [Pa] for the Chebyshev fit """
-        def __get__(self):
-            return self.rate.Pmax()
-
-    property n_pressure:
-        """ Number of pressures over which the Chebyshev fit is computed """
-        def __get__(self):
-            return self.rate.nPressure()
+            return self.cxx_object().Pmin(), self.cxx_object().Pmax()
 
     property n_temperature:
-        """ Number of temperatures over which the Chebyshev fit is computed """
-        def __get__(self):
-            return self.rate.nTemperature()
-
-    property coeffs:
         """
-        2D array of Chebyshev coefficients of size `(n_temperature, n_pressure)`.
+        Number of temperatures over which the Chebyshev fit is computed.
+        (same as number of rows of `data` property).
         """
         def __get__(self):
-            c = np.fromiter(self.rate.coeffs(), np.double)
-            return c.reshape((self.rate.nTemperature(), self.rate.nPressure()))
+            return self.cxx_object().nTemperature()
+
+    property n_pressure:
+        """
+        Number of pressures over which the Chebyshev fit is computed
+        (same as number of columns of `data` property).
+        """
+        def __get__(self):
+            return self.cxx_object().nPressure()
+
+    property data:
+        """
+        2D array of Chebyshev coefficients where rows and columns correspond to
+        temperature and pressure dimensions over which the Chebyshev fit is computed.
+        """
+        def __get__(self):
+            cdef CxxArray2D cxxcoeffs = self.cxx_object().data()
+            c = np.fromiter(cxxcoeffs.data(), np.double)
+            return c.reshape(cxxcoeffs.nRows(), cxxcoeffs.nColumns(), order="F")
 
 
-cdef class CustomRate(_ReactionRate):
+cdef class CustomRate(ReactionRate):
     r"""
     A custom rate coefficient which depends on temperature only.
 
@@ -287,14 +641,24 @@ cdef class CustomRate(_ReactionRate):
     for example::
 
         rr = CustomRate(lambda T: 38.7 * T**2.7 * exp(-3150.15/T))
+
+    Warning: this class is an experimental part of the Cantera API and
+        may be changed or removed without notice.
     """
+    _reaction_rate_type = "custom-rate-function"
+
     def __cinit__(self, k=None, init=True):
 
         if init:
-            self._base.reset(new CxxCustomFunc1Rate())
-            self.base = self._base.get()
-            self.rate = <CxxCustomFunc1Rate*>(self.base)
-            self.set_rate_function(k)
+            self._rate.reset(new CxxCustomFunc1Rate())
+            self.set_cxx_object()
+            try:
+                self.set_rate_function(k)
+            except Exception:
+                raise TypeError(f"Cannot convert input with type '{type(k)}' to rate expression.")
+
+    cdef CxxCustomFunc1Rate* cxx_object(self):
+        return <CxxCustomFunc1Rate*>self.rate
 
     def set_rate_function(self, k):
         r"""
@@ -312,7 +676,7 @@ cdef class CustomRate(_ReactionRate):
         else:
             self._rate_func = Func1(k)
 
-        self.rate.setRateFunction(self._rate_func._func)
+        self.cxx_object().setRateFunction(self._rate_func._func)
 
 
 cdef class Reaction:
@@ -324,21 +688,39 @@ cdef class Reaction:
         Value used to set `reactants`
     :param products:
         Value used to set `products`
+    :param rate:
+        The rate parameterization for the reaction, given as one of the following:
 
-    The static methods `listFromFile`, `listFromYaml`, `listFromCti`, and
+           - a `ReactionRate` object
+           - a `dict` containing the parameters needed to construct a `ReactionRate`
+             object, with keys corresponding to the YAML format
+           - a `dict` containing Arrhenius parameters (``A``, ``b``, and ``Ea``)
+    :param equation:
+        The reaction equation, used to set the reactants and products if values for
+        those arguments are not provided.
+
+    Examples::
+
+        R = ct.Reaction({"O": 1, "H2": 1}, {"H": 1, "OH": 1},
+                        ct.ArrheniusRate(38.7, 2.7, 26191840.0))
+        R = ct.Reaction(equation="O + H2 <=> H + OH",
+                        rate={"A": 38.7, "b", 2.7, "Ea": 26191840.0})
+        R = ct.Reaction(equation="HO2 <=> OH + O", rate=ChebyshevRate(...))
+
+    The static methods `list_from_file`, `list_from_yaml`, `listFromCti`, and
     `listFromXml` can be used to create lists of `Reaction` objects from
     existing definitions in the YAML, CTI, or XML formats. All of the following
     will produce a list of the 325 reactions which make up the GRI 3.0
     mechanism::
 
-        R = ct.Reaction.listFromFile("gri30.yaml", gas)
+        R = ct.Reaction.list_from_file("gri30.yaml", gas)
         R = ct.Reaction.listFromCti(open("path/to/gri30.cti").read())
         R = ct.Reaction.listFromXml(open("path/to/gri30.xml").read())
 
     where `gas` is a `Solution` object with the appropriate thermodynamic model,
     which is the `ideal-gas` model in this case.
 
-    The static method `listFromYaml` can be used to create lists of `Reaction`
+    The static method `list_from_yaml` can be used to create lists of `Reaction`
     objects from a YAML list::
 
         rxns = '''
@@ -347,15 +729,15 @@ cdef class Reaction:
           - equation: O + HO2 <=> OH + O2
             rate-constant: {A: 2.0e+13, b: 0.0, Ea: 0.0}
         '''
-        R = ct.Reaction.listFromYaml(rxns, gas)
+        R = ct.Reaction.list_from_yaml(rxns, gas)
 
-    The methods `fromYaml`, `fromCti`, and `fromXml` can be used to create
+    The methods `from_yaml`, `fromCti`, and `fromXml` can be used to create
     individual `Reaction` objects from definitions in these formats. In the case
     of using YAML or CTI definitions, it is important to verify that either the
     pre-exponential factor and activation energy are supplied in SI units, or
     that they have their units specified::
 
-        R = ct.Reaction.fromYaml('''{equation: O + H2 <=> H + OH,
+        R = ct.Reaction.from_yaml('''{equation: O + H2 <=> H + OH,
                 rate-constant: {A: 3.87e+04 cm^3/mol/s, b: 2.7, Ea: 6260 cal/mol}}''',
                 gas)
 
@@ -369,8 +751,8 @@ cdef class Reaction:
     _has_legacy = False
     _hybrid = False # indicate whether legacy implementations are separate or merged
 
-    def __cinit__(self, reactants="", products="", init=True, legacy=False, **kwargs):
-
+    def __cinit__(self, reactants="", products="", rate=None, *, legacy=False,
+                  init=True, **kwargs):
         if init:
             rxn_type = self._reaction_type
             if (not self._hybrid and self._has_legacy) or (self._hybrid and legacy):
@@ -382,13 +764,31 @@ cdef class Reaction:
             if products:
                 self.products = products
 
+    def __init__(self, reactants=None, products=None, rate=None, *, equation=None,
+                 init=True, legacy=False, **kwargs):
+
+        if legacy or not init:
+            return
+
+        if equation:
+            self.reaction.setEquation(stringify(equation))
+
+        if isinstance(rate, dict):
+            if set(rate) == {"A", "b", "Ea"}:
+                # Allow simple syntax for Arrhenius rates
+                rate = ReactionRate.from_dict({"rate-constant": rate})
+            else:
+                rate = ReactionRate.from_dict(rate)
+
+        self.reaction.setRate((<ReactionRate?>rate)._rate)
+
     @staticmethod
     cdef wrap(shared_ptr[CxxReaction] reaction):
         """
         Wrap a C++ Reaction object with a Python object of the correct derived type.
         """
         # ensure all reaction types are registered
-        if not(_reaction_class_registry):
+        if not _reaction_class_registry:
             def register_subclasses(cls):
                 for c in cls.__subclasses__():
                     rxn_type = getattr(c, "_reaction_type")
@@ -440,7 +840,7 @@ cdef class Reaction:
         return Reaction.wrap(cxx_reaction)
 
     @classmethod
-    def from_dict(cls, data, Kinetics kinetics=None):
+    def from_dict(cls, data, Kinetics kinetics):
         """
         Create a `Reaction` object from a dictionary corresponding to its YAML
         representation.
@@ -452,7 +852,7 @@ cdef class Reaction:
                  "rate-constant": {"A": 38.7, "b": 2.7, "Ea": 26191840.0}},
                 kinetics=gas)
 
-        In the example, *gas* is a Kinetics (or Solution) object.
+        In the example, ``gas`` is a Kinetics (or Solution) object.
 
         :param data:
             A dictionary corresponding to the YAML representation.
@@ -462,10 +862,8 @@ cdef class Reaction:
         """
         if cls._reaction_type != "":
             raise TypeError(
-                "Class method 'from_dict' was invoked from '{}' but should "
-                "be called from base class 'Reaction'".format(cls.__name__))
-        if kinetics is None:
-            raise ValueError("A Kinetics object is required.")
+                f"Class method 'from_dict' was invoked from '{cls.__name__}' but "
+                "should be called from base class 'Reaction'")
 
         cdef CxxAnyMap any_map = dict_to_anymap(data)
         cxx_reaction = CxxNewReaction(any_map, deref(kinetics.kinetics))
@@ -476,14 +874,28 @@ cdef class Reaction:
         """
         Create a `Reaction` object from its YAML string representation.
 
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by `Reaction.from_yaml`.
+        """
+        warnings.warn("Class method 'fromYaml' is renamed to 'from_yaml' "
+            "and will be removed after Cantera 2.6.", DeprecationWarning)
+
+        return cls.from_yaml(text, kinetics)
+
+    @classmethod
+    def from_yaml(cls, text, Kinetics kinetics):
+        """
+        Create a `Reaction` object from its YAML string representation.
+
         An example for the creation of a Reaction from a YAML string is::
 
-            rxn = Reaction.fromYaml('''
+            rxn = Reaction.from_yaml('''
                 equation: O + H2 <=> H + OH
                 rate-constant: {A: 38.7, b: 2.7, Ea: 6260.0 cal/mol}
                 ''', kinetics=gas)
 
-        In the example, *gas* is a Kinetics (or Solution) object.
+        In the example, ``gas`` is a Kinetics (or Solution) object.
 
         :param text:
             The YAML reaction string.
@@ -493,10 +905,8 @@ cdef class Reaction:
         """
         if cls._reaction_type != "":
             raise TypeError(
-                "Class method 'fromYaml' was invoked from '{}' but should "
-                "be called from base class 'Reaction'".format(cls.__name__))
-        if kinetics is None:
-            raise ValueError("A Kinetics object is required.")
+                f"Class method 'from_yaml' was invoked from '{cls.__name__}' but "
+                "should be called from base class 'Reaction'")
 
         cdef CxxAnyMap any_map
         any_map = AnyMapFromYamlString(stringify(text))
@@ -510,7 +920,7 @@ cdef class Reaction:
         YAML, CTI, or XML file.
 
         For YAML input files, a `Kinetics` object is required as the second
-        argument, and reactions from the section *section* will be returned.
+        argument, and reactions from the section ``section`` will be returned.
 
         Directories on Cantera's input file path will be searched for the
         specified file.
@@ -523,7 +933,14 @@ cdef class Reaction:
 
             The CTI and XML input formats are deprecated and will be removed in
             Cantera 3.0.
+
+        .. deprecated:: 2.6
+
+            To be removed after Cantera 2.6. Replaced by 'Reaction.list_from_file'.
         """
+        warnings.warn("Static method 'listFromFile' is renamed to 'list_from_file'."
+            " The old name will be removed after Cantera 2.6.", DeprecationWarning)
+
         if filename.lower().split('.')[-1] in ('yml', 'yaml'):
             if kinetics is None:
                 raise ValueError("A Kinetics object is required.")
@@ -532,6 +949,20 @@ cdef class Reaction:
                                             deref(kinetics.kinetics))
         else:
             cxx_reactions = CxxGetReactions(deref(CxxGetXmlFile(stringify(filename))))
+        return [Reaction.wrap(r) for r in cxx_reactions]
+
+    @staticmethod
+    def list_from_file(filename, Kinetics kinetics, section="reactions"):
+        """
+        Create a list of Reaction objects from all of the reactions defined in a
+        YAML file. Reactions from the section ``section`` will be returned.
+
+        Directories on Cantera's input file path will be searched for the
+        specified file.
+        """
+        root = AnyMapFromYamlFile(stringify(filename))
+        cxx_reactions = CxxGetReactions(root[stringify(section)],
+                                        deref(kinetics.kinetics))
         return [Reaction.wrap(r) for r in cxx_reactions]
 
     @staticmethod
@@ -566,6 +997,21 @@ cdef class Reaction:
 
     @staticmethod
     def listFromYaml(text, Kinetics kinetics):
+        """
+        Create a list of `Reaction` objects from all the reactions defined in a
+        YAML string.
+
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by `Reaction.list_from_yaml`.
+        """
+        warnings.warn("Class method 'listFromYaml' is renamed to 'list_from_yaml' "
+            "and will be removed after Cantera 2.6.", DeprecationWarning)
+
+        return Reaction.list_from_yaml(text, kinetics)
+
+    @staticmethod
+    def list_from_yaml(text, Kinetics kinetics):
         """
         Create a list of `Reaction` objects from all the reactions defined in a
         YAML string.
@@ -656,6 +1102,33 @@ cdef class Reaction:
         def __get__(self):
             return pystr(self.reaction.type())
 
+    property rate:
+        """ Get/Set the `ArrheniusRate` rate coefficient for this reaction. """
+        def __get__(self):
+            if self.uses_legacy:
+                raise CanteraError(
+                    f"Not implemented for legacy reaction of type {self.reaction_type}")
+            return ReactionRate.wrap(self.reaction.rate())
+
+        def __set__(self, rate):
+            if self.uses_legacy:
+                raise CanteraError(
+                    f"Not implemented for legacy reaction of type {self.reaction_type}")
+
+            cdef ReactionRate rate3
+            if isinstance(rate, ReactionRate):
+                rate3 = rate
+            elif isinstance(rate, Arrhenius):
+                warnings.warn("Setting the rate using an 'Arrhenius' object is "
+                    "deprecated and will be removed after Cantera 2.6. The argument "
+                    "type is replaceable by 'ArrheniusRate'.", DeprecationWarning)
+                rate3 = ArrheniusRate(rate.pre_exponential_factor,
+                                      rate.temperature_exponent,
+                                      rate.activation_energy)
+            else:
+                raise TypeError("Invalid rate definition")
+            self.reaction.setRate(rate3._rate)
+
     property reversible:
         """
         Get/Set a flag which is `True` if this reaction is reversible or `False`
@@ -696,6 +1169,224 @@ cdef class Reaction:
         def __set__(self, allow):
             self.reaction.allow_negative_orders = allow
 
+    property allow_negative_pre_exponential_factor:
+        """
+        Get/Set whether the rate coefficient is allowed to have a negative
+        pre-exponential factor.
+
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by property `ArrheniusRate.allow_negative_pre_exponential_factor`.
+        """
+        def __get__(self):
+            if self.uses_legacy:
+                raise CanteraError(
+                    f"Not implemented for legacy reaction of type {self.reaction_type}")
+
+            attr = "allow_negative_pre_exponential_factor"
+            warnings.warn(self._deprecation_warning(attr), DeprecationWarning)
+            return self.rate.allow_negative_pre_exponential_factor
+        def __set__(self, allow):
+            if self.uses_legacy:
+                raise CanteraError(
+                    f"Not implemented for legacy reaction of type {self.reaction_type}")
+
+            attr = "allow_negative_pre_exponential_factor"
+            warnings.warn(self._deprecation_warning(attr), DeprecationWarning)
+            self.rate.allow_negative_pre_exponential_factor = allow
+
+    property rates:
+        """
+        For reactions with Plog rates, get/set the rate coefficients for this reaction
+        as a list of (pressure, rate) tuples.
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `PlogReaction` class. Replaced by `Reaction.rate.rates` for reactions where
+             the rate is a `PlogRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, PlogRate):
+                warnings.warn(self._deprecation_warning("rates"), DeprecationWarning)
+                return self.rate.rates
+            else:
+                raise TypeError("only valid for reactions with PlogRate rates")
+
+        def __set__(self, rates):
+            if isinstance(self.rate, PlogRate):
+                warnings.warn("Property 'rates' to be removed after Cantera 2.6. "
+                    "Setter is replaceable by assigning a new 'PlogRate' object created "
+                    "from rates to the rate property.", DeprecationWarning)
+                self.rate.rates = rates
+            else:
+                raise TypeError("only valid for reactions with PlogRate rates")
+
+    property Tmin:
+        """
+        Minimum temperature [K] for the Chebyshev fit
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.temperature_range[0]`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning(
+                        "Tmin", new="ChebyshevRate.temperature_range[0]"),
+                    DeprecationWarning)
+                return self.rate.temperature_range[0]
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    property Tmax:
+        """
+        Maximum temperature [K] for the Chebyshev fit
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.temperature_range[1]`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning(
+                        "Tmax", new="ChebyshevRate.temperature_range[1]"),
+                    DeprecationWarning)
+                return self.rate.temperature_range[1]
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    property Pmin:
+        """
+        Minimum pressure [Pa] for the Chebyshev fit
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.pressure_range[0]`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning(
+                        "Pmin", new="ChebyshevRate.pressure_range[0]"),
+                    DeprecationWarning)
+                return self.rate.pressure_range[0]
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    property Pmax:
+        """
+        Maximum pressure [K] for the Chebyshev fit
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.pressure_range[1]`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning(
+                        "Pmax", new="ChebyshevRate.pressure_range[1]"),
+                    DeprecationWarning)
+                return self.rate.pressure_range[1]
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    property nPressure:
+        """
+        Number of pressures over which the Chebyshev fit is computed
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.n_pressure`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning(
+                        "nPressure", new="ChebyshevRate.n_pressure"),
+                    DeprecationWarning)
+                return self.rate.n_pressure
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    property nTemperature:
+        """
+        Number of temperatures over which the Chebyshev fit is computed
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.n_temperature`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning(
+                        "nTemperature", new="ChebyshevRate.n_temperature"),
+                    DeprecationWarning)
+                return self.rate.n_temperature
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    property coeffs:
+        """
+        2D array of Chebyshev coefficients of size `(n_temperature, n_pressure)`.
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `Reaction.rate.data`
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        def __get__(self):
+            if isinstance(self.rate, ChebyshevRate):
+                warnings.warn(
+                    self._deprecation_warning("coeffs", new="ChebyshevRate.data"),
+                    DeprecationWarning)
+                return self.rate.data
+            else:
+                raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    def set_parameters(self, Tmin, Tmax, Pmin, Pmax, coeffs):
+        """
+        For Chebyshev reactions, simultaneously set values for `Tmin`, `Tmax`, `Pmin`,
+        `Pmax`, and `coeffs`.
+
+        .. deprecated:: 2.6
+             This property is for temporary backwards-compatibility with the deprecated
+             `ChebyshevReaction` class. Replaced by `ChebyshevRate` constructor
+             for reactions where the rate is a a `ChebyshevRate`.
+        """
+        cdef pair[double,double] Trange
+        cdef pair[double,double] Prange
+        if isinstance(self.rate, ChebyshevRate):
+            warnings.warn("Method 'set_parameters' to be removed after Cantera 2.6. "
+                "Method is replaceable by assigning a new 'ChebyshevRate' object to "
+                "the rate property.", DeprecationWarning)
+            Trange.first, Trange.second = Tmin, Tmax
+            Prange.first, Prange.second = Pmin, Pmax
+            self.rate = ChebyshevRate(Trange, Prange, coeffs)
+        else:
+            raise TypeError("only valid for reactions with ChebyshevRate rates")
+
+    def __call__(self, T, extra=None):
+        """
+        .. deprecated:: 2.6
+            To be removed after Cantera 2.6.
+            Replaced by `Reaction.rate(T)` or `Reaction.rate(T, P)`
+        """
+        warnings.warn(self._deprecation_warning("__call__", "method"), DeprecationWarning)
+        if extra is None:
+            return self.rate(T)
+        else:
+            return self.rate(T, extra)
+
     property input_data:
         """
         Get input data for this reaction with its current parameter values,
@@ -727,15 +1418,25 @@ cdef class Reaction:
     def __str__(self):
         return self.equation
 
-    def _deprecation_warning(self, attr, what="property"):
-        return ("\n{} '{}' to be removed after Cantera 2.6.\nThis {} is moved to "
-                "the {} object accessed via the 'rate' property."
-                ).format(what.capitalize(), attr, what, type(self.rate).__name__)
+    def _deprecation_warning(self, attr, what="property", new=None):
+        if new:
+            return (f"\n{what.capitalize()} '{attr}' to be removed after Cantera 2.6.\n"
+                    f"This {what} is moved to the {type(self.rate).__name__} object "
+                    f"accessed via the 'rate' property as '{new}'.")
+        return (f"\n{what.capitalize()} '{attr}' to be removed after Cantera 2.6.\n"
+                f"This {what} is moved to the {type(self.rate).__name__} object accessed "
+                "via the 'rate' property.")
 
     property uses_legacy:
         """Indicate whether reaction uses a legacy implementation"""
         def __get__(self):
             return self.reaction.usesLegacy()
+
+    property rate_coeff_units:
+        """Get reaction rate coefficient units"""
+        def __get__(self):
+            cdef CxxUnits rate_units = self.reaction.rate_units
+            return Units.copy(rate_units)
 
 
 cdef class Arrhenius:
@@ -747,12 +1448,12 @@ cdef class Arrhenius:
 
         k_f = A T^b \exp{-\tfrac{E}{RT}}
 
-    where *A* is the `pre_exponential_factor`, *b* is the `temperature_exponent`,
-    and *E* is the `activation_energy`.
+    where ``A`` is the `pre_exponential_factor`, ``b`` is the `temperature_exponent`,
+    and ``E`` is the `activation_energy`.
     """
     def __cinit__(self, A=0, b=0, E=0, init=True):
         if init:
-            self.rate = new CxxArrhenius(A, b, E / gas_constant)
+            self.base = new CxxArrheniusBase(A, b, E)
             self.own_rate = True
             self.reaction = None
         else:
@@ -760,29 +1461,36 @@ cdef class Arrhenius:
 
     def __dealloc__(self):
         if self.own_rate:
-            del self.rate
+            del self.base
+
+    @staticmethod
+    cdef wrap(CxxArrheniusBase* rate):
+        r = Arrhenius(init=False)
+        r.base = rate
+        r.reaction = None
+        return r
 
     property pre_exponential_factor:
         """
-        The pre-exponential factor *A* in units of m, kmol, and s raised to
+        The pre-exponential factor ``A`` in units of m, kmol, and s raised to
         powers depending on the reaction order.
         """
         def __get__(self):
-            return self.rate.preExponentialFactor()
+            return self.base.preExponentialFactor()
 
     property temperature_exponent:
         """
-        The temperature exponent *b*.
+        The temperature exponent ``b``.
         """
         def __get__(self):
-            return self.rate.temperatureExponent()
+            return self.base.temperatureExponent()
 
     property activation_energy:
         """
-        The activation energy *E* [J/kmol].
+        The activation energy ``E`` [J/kmol].
         """
         def __get__(self):
-            return self.rate.activationEnergy_R() * gas_constant
+            return self.base.activationEnergy()
 
     def __repr__(self):
         return 'Arrhenius(A={:g}, b={:g}, E={:g})'.format(
@@ -790,20 +1498,26 @@ cdef class Arrhenius:
             self.activation_energy)
 
     def __call__(self, float T):
-        cdef double logT = np.log(T)
-        cdef double recipT = 1/T
-        return self.rate.updateRC(logT, recipT)
+        return self.base.evalRate(np.log(T), 1/T)
 
 
-cdef wrapArrhenius(CxxArrhenius* rate, Reaction reaction):
+cdef wrapArrhenius(CxxArrheniusBase* rate, Reaction reaction):
     r = Arrhenius(init=False)
-    r.rate = rate
+    r.base = rate
+    if reaction.uses_legacy:
+        r.legacy = <CxxArrhenius2*>r.base
+
     r.reaction = reaction
     return r
 
-cdef copyArrhenius(CxxArrhenius* rate):
+cdef copyArrhenius(CxxArrhenius2* rate):
     r = Arrhenius(rate.preExponentialFactor(), rate.temperatureExponent(),
-                  rate.activationEnergy_R() * gas_constant)
+                  rate.activationEnergy())
+    return r
+
+cdef copyArrheniusBase(CxxArrheniusBase* rate):
+    r = Arrhenius(rate.preExponentialFactor(), rate.temperatureExponent(),
+                  rate.activationEnergy())
     return r
 
 
@@ -823,37 +1537,34 @@ cdef class ElementaryReaction(Reaction):
 
         equation: O + H2 <=> H + OH
         rate-constant: {A: 3.87e+04 cm^3/mol/s, b: 2.7, Ea: 6260.0 cal/mol}
+
+    .. deprecated:: 2.6
+        To be removed after Cantera 2.6. Capabilities merged directly into the base
+        `Reaction` class.
     """
     _reaction_type = "elementary"
     _has_legacy = True
-    _hybrid = True
+    _hybrid = False
 
-    cdef CxxElementaryReaction3* er(self):
-        if self.uses_legacy:
-            raise AttributeError("Incorrect accessor for updated implementation")
-        return <CxxElementaryReaction3*>self.reaction
-
-    cdef CxxElementaryReaction2* er2(self):
+    cdef CxxElementaryReaction2* cxx_object2(self):
         if not self.uses_legacy:
             raise AttributeError("Incorrect accessor for legacy implementation")
         return <CxxElementaryReaction2*>self.reaction
 
-    def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
-                 init=True, legacy=False, **kwargs):
+    def __init__(self, reactants=None, products=None, rate=None, *, equation=None,
+                 Kinetics kinetics=None, init=True, **kwargs):
+
+        if reactants and products and not equation:
+            equation = self.equation
 
         if init and equation and kinetics:
-
-            rxn_type = self._reaction_type
-            if legacy:
-                rxn_type += "-legacy"
+            rxn_type = self._reaction_type + "-legacy"
             spec = {"equation": equation, "type": rxn_type}
             if isinstance(rate, dict):
                 spec["rate-constant"] = rate
-            elif legacy and (isinstance(rate, Arrhenius) or rate is None):
+            elif isinstance(rate, Arrhenius) or rate is None:
                 spec["rate-constant"] = dict.fromkeys(["A", "b", "Ea"], 0.)
             elif rate is None:
-                pass
-            elif not legacy and isinstance(rate, (Arrhenius, ArrheniusRate)):
                 pass
             else:
                 raise TypeError("Invalid rate definition")
@@ -862,27 +1573,28 @@ cdef class ElementaryReaction(Reaction):
                                             deref(kinetics.kinetics))
             self.reaction = self._reaction.get()
 
-            if legacy and isinstance(rate, Arrhenius):
-                self.rate = rate
-            elif not legacy and isinstance(rate, (ArrheniusRate, Arrhenius)):
-                self.rate = rate
+        if isinstance(rate, (Arrhenius, ArrheniusRate)):
+            self.rate = rate
 
     cdef _legacy_set_rate(self, Arrhenius rate):
-        cdef CxxElementaryReaction2* r = self.er2()
-        r.rate = deref(rate.rate)
+        cdef CxxElementaryReaction2* r = self.cxx_object2()
+        r.rate = deref(<CxxArrhenius2*>rate.base)
 
     property rate:
         """ Get/Set the `ArrheniusRate` rate coefficient for this reaction. """
         def __get__(self):
             if self.uses_legacy:
-                return wrapArrhenius(&(self.er2().rate), self)
+                return wrapArrhenius(&(self.cxx_object2().rate), self)
+            else:
+                # Used by non-legacy ThreeBodyReaction
+                return super().rate
 
-            return ArrheniusRate.wrap(self.er().rate())
         def __set__(self, rate):
             if self.uses_legacy:
                 self._legacy_set_rate(rate)
                 return
 
+            # Used by non-legacy ThreeBodyReaction
             cdef ArrheniusRate rate3
             if isinstance(rate, ArrheniusRate):
                 rate3 = rate
@@ -895,7 +1607,7 @@ cdef class ElementaryReaction(Reaction):
                                       rate.activation_energy)
             else:
                 raise TypeError("Invalid rate definition")
-            self.er().setRate(rate3._base)
+            self.reaction.setRate(rate3._rate)
 
     property allow_negative_pre_exponential_factor:
         """
@@ -908,14 +1620,14 @@ cdef class ElementaryReaction(Reaction):
         """
         def __get__(self):
             if self.uses_legacy:
-                return self.er2().allow_negative_pre_exponential_factor
+                return self.cxx_object2().allow_negative_pre_exponential_factor
 
             attr = "allow_negative_pre_exponential_factor"
             warnings.warn(self._deprecation_warning(attr), DeprecationWarning)
             return self.rate.allow_negative_pre_exponential_factor
         def __set__(self, allow):
             if self.uses_legacy:
-                self.er2().allow_negative_pre_exponential_factor = allow
+                self.cxx_object2().allow_negative_pre_exponential_factor = allow
                 return
 
             attr = "allow_negative_pre_exponential_factor"
@@ -948,26 +1660,42 @@ cdef class ThreeBodyReaction(ElementaryReaction):
     _has_legacy = True
     _hybrid = True
 
-    cdef CxxThreeBodyReaction3* tbr(self):
+    cdef CxxThreeBodyReaction3* cxx_threebody(self):
         if self.uses_legacy:
             raise AttributeError("Incorrect accessor for updated implementation")
         return <CxxThreeBodyReaction3*>self.reaction
 
-    cdef CxxThreeBodyReaction2* tbr2(self):
+    cdef CxxThreeBodyReaction2* cxx_threebody2(self):
         if not self.uses_legacy:
             raise AttributeError("Incorrect accessor for legacy implementation")
         return <CxxThreeBodyReaction2*>self.reaction
 
     cdef CxxThirdBody* thirdbody(self):
         if self.uses_legacy:
-            return &(self.tbr2().third_body)
-        return <CxxThirdBody*>(self.tbr().thirdBody().get())
+            return &(self.cxx_threebody2().third_body)
+        return <CxxThirdBody*>(self.cxx_threebody().thirdBody().get())
 
-    def __init__(self, equation=None, rate=None, efficiencies=None,
-                 Kinetics kinetics=None, legacy=False, init=True, **kwargs):
+    def __init__(self, reactants="", products="", rate=None, *, equation=None,
+                 efficiencies=None, Kinetics kinetics=None, legacy=False, init=True,
+                 **kwargs):
+
+        if reactants and products and not equation:
+            equation = self.equation
+
+        if isinstance(rate, ArrheniusRate):
+            self._reaction.reset(new CxxThreeBodyReaction3())
+            self.reaction = self._reaction.get()
+            if reactants and products:
+                self.reactants = reactants
+                self.products = products
+            else:
+                self.reaction.setEquation(stringify(equation))
+            self.reaction.setRate((<ReactionRate>rate)._rate)
+            if efficiencies:
+                self.efficiencies = efficiencies
+            return
 
         if init and equation and kinetics:
-
             rxn_type = self._reaction_type
             if legacy:
                 rxn_type += "-legacy"
@@ -1018,7 +1746,7 @@ cdef class ThreeBodyReaction(ElementaryReaction):
 
     def efficiency(self, species):
         """
-        Get the efficiency of the third body named *species* considering both
+        Get the efficiency of the third body named ``species`` considering both
         the default efficiency and species-specific efficiencies.
         """
         return self.thirdbody().efficiency(stringify(species))
@@ -1037,7 +1765,7 @@ cdef class Falloff:
     :param params:
         Not used for the "simple" falloff parameterization.
     :param init:
-        Used internally when wrapping :ct:`Falloff` objects returned from C++.
+        Used internally when wrapping :ct:`FalloffRate` objects returned from C++.
     """
     falloff_type = "Lindemann"
 
@@ -1118,25 +1846,130 @@ cdef class FalloffReaction(Reaction):
     """
     A reaction that is first-order in [M] at low pressure, like a third-body
     reaction, but zeroth-order in [M] as pressure increases.
+
+    An example for the definition of a `FalloffReaction` object is given as::
+
+        rxn = FalloffReaction(
+            equation="2 OH (+ M) <=> H2O2 (+ M)",
+            type="falloff",
+            rate=ct.TroeRate(low=ct.Arrhenius(2.3e+12, -0.9, -7112800.0),
+                             high=ct.Arrhenius(7.4e+10, -0.37, 0),
+                             data=[0.7346, 94.0, 1756.0, 5182.0])
+            efficiencies={"AR": 0.7, "H2": 2.0, "H2O": 6.0},
+            kinetics=gas)
+
+    The YAML description corresponding to this reaction is::
+
+        equation: 2 OH (+ M) <=> H2O2 (+ M)  # Reaction 3
+        type: falloff-legacy
+        low-P-rate-constant: {A: 2.3e+12, b: -0.9, Ea: -1700.0 cal/mol}
+        high-P-rate-constant: {A: 7.4e+10, b: -0.37, Ea: 0.0 cal/mol}
+        Troe: {A: 0.7346, T3: 94.0, T1: 1756.0, T2: 5182.0}
+        efficiencies: {AR: 0.7, H2: 2.0, H2O: 6.0}
     """
     _reaction_type = "falloff"
+    _has_legacy = True
+    _hybrid = True
 
-    cdef CxxFalloffReaction* frxn(self):
-        return <CxxFalloffReaction*>self.reaction
+    cdef CxxFalloffReaction3* cxx_object(self):
+        if self.uses_legacy:
+            raise AttributeError("Incorrect accessor for updated implementation")
+        return <CxxFalloffReaction3*>self.reaction
+
+    cdef CxxFalloffReaction2* cxx_object2(self):
+        if not self.uses_legacy:
+            raise AttributeError("Incorrect accessor for legacy implementation")
+        return <CxxFalloffReaction2*>self.reaction
+
+    cdef CxxThirdBody* thirdbody(self):
+        if self.uses_legacy:
+            return &(self.cxx_object2().third_body)
+        return <CxxThirdBody*>(self.cxx_object().thirdBody().get())
+
+    def __init__(self, reactants="", products="", rate=None, *, equation=None,
+                 efficiencies=None, Kinetics kinetics=None, init=True, legacy=False,
+                 **kwargs):
+
+        if reactants and products and not equation:
+            equation = self.equation
+
+        if isinstance(rate, FalloffRate):
+            self._reaction.reset(new CxxFalloffReaction3())
+            self.reaction = self._reaction.get()
+            if reactants and products:
+                self.reactants = reactants
+                self.products = products
+            else:
+                self.reaction.setEquation(stringify(equation))
+            self.reaction.setRate((<ReactionRate>rate)._rate)
+            if efficiencies:
+                self.efficiencies = efficiencies
+            return
+
+        if init and equation and kinetics:
+
+            rxn_type = self._reaction_type
+            if legacy:
+                rxn_type += "-legacy"
+            spec = {"equation": equation, "type": rxn_type}
+            if isinstance(rate, dict):
+                for key, value in rate.items():
+                    spec[key.replace("_", "-")] = value
+            elif legacy and isinstance(rate, Falloff):
+                raise NotImplementedError("Not implemented for legacy rates")
+            elif not legacy and (isinstance(rate, FalloffRate) or rate is None):
+                pass
+            else:
+                raise TypeError(
+                    f"Invalid rate definition; type is '{type(rate).__name__}'")
+
+            if isinstance(efficiencies, dict):
+                spec["efficiencies"] = efficiencies
+
+            self._reaction = CxxNewReaction(dict_to_anymap(spec),
+                                            deref(kinetics.kinetics))
+            self.reaction = self._reaction.get()
+
+            if not legacy and isinstance(rate, FalloffRate):
+                self.rate = rate
+
+    property rate:
+        """ Get/Set the `FalloffRate` rate coefficients for this reaction. """
+        def __get__(self):
+            if not self.uses_legacy:
+                return FalloffRate.wrap(self.cxx_object().rate())
+            raise AttributeError("Legacy implementation does not use rate property.")
+        def __set__(self, FalloffRate rate):
+            if not self.uses_legacy:
+                self.cxx_object().setRate(rate._rate)
+                return
+            raise AttributeError("Legacy implementation does not use rate property.")
 
     property low_rate:
         """ Get/Set the `Arrhenius` rate constant in the low-pressure limit """
         def __get__(self):
-            return wrapArrhenius(&(self.frxn().low_rate), self)
+            if self.uses_legacy:
+                return wrapArrhenius(&(self.cxx_object2().low_rate), self)
+            warnings.warn(self._deprecation_warning("low_rate"), DeprecationWarning)
+            return self.rate.low_rate
         def __set__(self, Arrhenius rate):
-            self.frxn().low_rate = deref(rate.rate)
+            if self.uses_legacy:
+                self.cxx_object2().low_rate = deref(rate.legacy)
+            warnings.warn(self._deprecation_warning("low_rate"), DeprecationWarning)
+            self.rate.low_rate = rate
 
     property high_rate:
         """ Get/Set the `Arrhenius` rate constant in the high-pressure limit """
         def __get__(self):
-            return wrapArrhenius(&(self.frxn().high_rate), self)
+            if self.uses_legacy:
+                return wrapArrhenius(&(self.cxx_object2().high_rate), self)
+            warnings.warn(self._deprecation_warning("high_rate"), DeprecationWarning)
+            return self.rate.high_rate
         def __set__(self, Arrhenius rate):
-            self.frxn().high_rate = deref(rate.rate)
+            if self.uses_legacy:
+                self.cxx_object2().high_rate = deref(rate.legacy)
+            warnings.warn(self._deprecation_warning("high_rate"), DeprecationWarning)
+            self.rate.high_rate = rate
 
     property falloff:
         """
@@ -1144,9 +1977,15 @@ cdef class FalloffReaction(Reaction):
         rate coefficients
         """
         def __get__(self):
-            return wrapFalloff(self.frxn().falloff)
+            if self.uses_legacy:
+                return wrapFalloff(self.cxx_object2().falloff)
+            raise AttributeError("New implementation uses 'FalloffRate' objects that "
+                "are retrieved using the 'rate' property.")
         def __set__(self, Falloff f):
-            self.frxn().falloff = f._falloff
+            if self.uses_legacy:
+                self.cxx_object2().falloff = f._falloff
+            raise TypeError("New implementation requires 'FalloffRate' objects that "
+                "are set using the 'rate' property.")
 
     property efficiencies:
         """
@@ -1155,9 +1994,9 @@ cdef class FalloffReaction(Reaction):
         efficiencies.
         """
         def __get__(self):
-            return comp_map_to_dict(self.frxn().third_body.efficiencies)
+            return comp_map_to_dict(self.thirdbody().efficiencies)
         def __set__(self, eff):
-            self.frxn().third_body.efficiencies = comp_map(eff)
+            self.thirdbody().efficiencies = comp_map(eff)
 
     property default_efficiency:
         """
@@ -1165,28 +2004,41 @@ cdef class FalloffReaction(Reaction):
         species used for species not in `efficiencies`.
         """
         def __get__(self):
-            return self.frxn().third_body.default_efficiency
+            return self.thirdbody().default_efficiency
         def __set__(self, default_eff):
-            self.frxn().third_body.default_efficiency = default_eff
+            self.thirdbody().default_efficiency = default_eff
 
     property allow_negative_pre_exponential_factor:
         """
         Get/Set whether the rate coefficient is allowed to have a negative
         pre-exponential factor.
+
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by property `FalloffRate.allow_negative_pre_exponential_factor`.
         """
         def __get__(self):
-            cdef CxxFalloffReaction* r = <CxxFalloffReaction*>self.reaction
-            return r.allow_negative_pre_exponential_factor
+            if self.uses_legacy:
+                return self.cxx_object2().allow_negative_pre_exponential_factor
+
+            attr = "allow_negative_pre_exponential_factor"
+            warnings.warn(self._deprecation_warning(attr), DeprecationWarning)
+            return self.rate.allow_negative_pre_exponential_factor
         def __set__(self, allow):
-            cdef CxxFalloffReaction* r = <CxxFalloffReaction*>self.reaction
-            r.allow_negative_pre_exponential_factor = allow
+            if self.uses_legacy:
+                self.cxx_object2().allow_negative_pre_exponential_factor = allow
+                return
+
+            attr = "allow_negative_pre_exponential_factor"
+            warnings.warn(self._deprecation_warning(attr), DeprecationWarning)
+            self.rate.allow_negative_pre_exponential_factor = allow
 
     def efficiency(self, species):
         """
-        Get the efficiency of the third body named *species* considering both
+        Get the efficiency of the third body named ``species`` considering both
         the default efficiency and species-specific efficiencies.
         """
-        return self.frxn().third_body.efficiency(stringify(species))
+        return self.thirdbody().efficiency(stringify(species))
 
 
 cdef class ChemicallyActivatedReaction(FalloffReaction):
@@ -1223,31 +2075,27 @@ cdef class PlogReaction(Reaction):
         - {P: 1.0 atm, A: 4.9108e+31, b: -4.8507, Ea: 2.47728e+04 cal/mol}
         - {P: 10.0 atm, A: 1.2866e+47, b: -9.0246, Ea: 3.97965e+04 cal/mol}
         - {P: 100.0 atm, A: 5.9632e+56, b: -11.529, Ea: 5.25996e+04 cal/mol}or.
+
+    .. deprecated:: 2.6
+            To be deprecated with version 2.6, and removed thereafter.
+            Implemented by the `Reaction` class with a `PlogRate` reaction rate.
     """
     _reaction_type = "pressure-dependent-Arrhenius"
     _has_legacy = True
-    _hybrid = True
+    _hybrid = False
 
-    cdef CxxPlogReaction3* pr(self):
-        if self.uses_legacy:
-            raise AttributeError("Incorrect accessor for updated implementation")
-        return <CxxPlogReaction3*>self.reaction
-
-    cdef CxxPlogReaction2* cp2(self):
+    cdef CxxPlogReaction2* cxx_object2(self):
         if not self.uses_legacy:
             raise AttributeError("Incorrect accessor for legacy implementation")
         return <CxxPlogReaction2*>self.reaction
 
     def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
-                 init=True, legacy=False, **kwargs):
+                 init=True, **kwargs):
 
         if init and equation and kinetics:
-
-            rxn_type = self._reaction_type
-            if legacy:
-                rxn_type += "-legacy"
+            rxn_type = self._reaction_type + "-legacy"
             spec = {"equation": equation, "type": rxn_type}
-            if legacy and isinstance(rate, list):
+            if isinstance(rate, list):
                 rates = []
                 for r in rate:
                     rates.append({
@@ -1257,8 +2105,6 @@ cdef class PlogReaction(Reaction):
                         "Ea": r[1].activation_energy,
                     })
                 spec.update({'rate-constants': rates})
-            elif not legacy and (isinstance(rate, (PlogRate, list)) or rate is None):
-                pass
             else:
                 raise TypeError("Invalid rate definition")
 
@@ -1266,41 +2112,32 @@ cdef class PlogReaction(Reaction):
                                             deref(kinetics.kinetics))
             self.reaction = self._reaction.get()
 
-            if not legacy and isinstance(rate, PlogRate):
-                self.rate = rate
-            elif not legacy and isinstance(rate, list):
-                self.rate = PlogRate(rate)
-
-    property rate:
-        """ Get/Set the `PlogRate` rate coefficients for this reaction. """
-        def __get__(self):
-            if self.uses_legacy:
-                raise AttributeError("Legacy implementation does not use rate property.")
-            return PlogRate.wrap(self.pr().rate())
-        def __set__(self, PlogRate rate):
-            if self.uses_legacy:
-                raise AttributeError("Legacy implementation does not use rate property.")
-            self.pr().setRate(rate._base)
-
     cdef list _legacy_get_rates(self):
-        cdef CxxPlogReaction2* r = self.cp2()
-        cdef vector[pair[double,CxxArrhenius]] cxxrates = r.rate.rates()
-        cdef pair[double,CxxArrhenius] p_rate
+        cdef CxxPlogReaction2* r = self.cxx_object2()
+        cdef vector[pair[double,CxxArrhenius2]] cxxrates = r.rate.rates()
+        cdef pair[double,CxxArrhenius2] p_rate
         rates = []
         for p_rate in cxxrates:
             rates.append((p_rate.first,copyArrhenius(&p_rate.second)))
         return rates
 
     cdef _legacy_set_rates(self, list rates):
-        cdef multimap[double,CxxArrhenius] ratemap
+        cdef multimap[double,CxxArrhenius2] ratemap
         cdef Arrhenius rate
-        cdef pair[double,CxxArrhenius] item
+        cdef pair[double,CxxArrhenius2] item
         for p, rate in rates:
             item.first = p
-            item.second = deref(rate.rate)
+            if rate.legacy is not NULL:
+                item.second = deref(rate.legacy)
+            else:
+                item.second = CxxArrhenius2(
+                    rate.base.preExponentialFactor(),
+                    rate.base.temperatureExponent(),
+                    rate.base.activationEnergy() / gas_constant
+                )
             ratemap.insert(item)
 
-        cdef CxxPlogReaction2* r = self.cp2()
+        cdef CxxPlogReaction2* r = self.cxx_object2()
         r.rate = CxxPlog(ratemap)
 
     property rates:
@@ -1308,31 +2145,15 @@ cdef class PlogReaction(Reaction):
         Get/Set the rate coefficients for this reaction, which are given as a
         list of (pressure, `Arrhenius`) tuples.
 
-        .. deprecated:: 2.6
-             To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `PlogRate.rates`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self._legacy_get_rates()
-
-            warnings.warn(self._deprecation_warning("rates"), DeprecationWarning)
-            return self.rate.rates
+            return self._legacy_get_rates()
 
         def __set__(self, rates):
-            if self.uses_legacy:
-                self._legacy_set_rates(rates)
-                return
-
-            warnings.warn("Property 'rates' to be removed after Cantera 2.6. "
-                "Setter is replaceable by assigning a new 'PlogRate' object created "
-                "from rates to the rate property.", DeprecationWarning)
-            rate_ = self.rate
-            rate_.rates = rates
-            self.rate = rate_
+            self._legacy_set_rates(rates)
 
     cdef _legacy_call(self, float T, float P):
-        cdef CxxPlogReaction2* r = self.cp2()
+        cdef CxxPlogReaction2* r = self.cxx_object2()
         cdef double logT = np.log(T)
         cdef double recipT = 1/T
         cdef double logP = np.log(P)
@@ -1341,17 +2162,7 @@ cdef class PlogReaction(Reaction):
         return r.rate.updateRC(logT, recipT)
 
     def __call__(self, float T, float P):
-        """
-        .. deprecated:: 2.6
-             To be deprecated with version 2.6, and removed thereafter.
-             Replaceable by call to `rate` property.
-        """
-        if self.uses_legacy:
-            return self._legacy_call(T, P)
-
-        warnings.warn(
-            self._deprecation_warning("__call__", "method"), DeprecationWarning)
-        return self.rate(T, P)
+        return self._legacy_call(T, P)
 
 
 cdef class ChebyshevReaction(Reaction):
@@ -1363,8 +2174,8 @@ cdef class ChebyshevReaction(Reaction):
 
         rxn = ChebyshevReaction(
             equation="HO2 <=> OH + O",
-            rate={"Tmin": 290.0, "Tmax": 3000.0,
-                  "Pmin": 1e3, "Pmax": 1e8,
+            rate={"temperature-range": [290.0, 3000.0],
+                  "pressure-range": [1e3, 1e8],
                   "data": [[8.2883, -1.1397, -0.12059, 0.016034],
                            [1.9764, 1.0037, 7.2865e-03, -0.030432],
                            [0.3177, 0.26889, 0.094806, -7.6385e-03]]},
@@ -1380,36 +2191,31 @@ cdef class ChebyshevReaction(Reaction):
         - [8.2883, -1.1397, -0.12059, 0.016034]
         - [1.9764, 1.0037, 7.2865e-03, -0.030432]
         - [0.3177, 0.26889, 0.094806, -7.6385e-03]
+
+    .. deprecated:: 2.6
+        To be deprecated with version 2.6, and removed thereafter.
+        Replaced by passing a `ChebyshevRate` object as the 'rate' argument to
+        the 'Reaction' class.
     """
     _reaction_type = "Chebyshev"
     _has_legacy = True
-    _hybrid = True
+    _hybrid = False
 
-    cdef CxxChebyshevReaction3* cr(self):
-        if self.uses_legacy:
-            raise AttributeError("Incorrect accessor for updated implementation")
-        return <CxxChebyshevReaction3*>self.reaction
-
-    cdef CxxChebyshevReaction2* cr2(self):
-        if not self.uses_legacy:
-            raise AttributeError("Incorrect accessor for legacy implementation")
+    cdef CxxChebyshevReaction2* cxx_object2(self):
         return <CxxChebyshevReaction2*>self.reaction
 
     def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
-                 init=True, legacy=False, **kwargs):
+                 init=True, **kwargs):
 
         if init and equation and kinetics:
-
-            rxn_type = self._reaction_type
-            if legacy:
-                rxn_type += "-legacy"
+            warnings.warn("Class 'ChebyshevReaction' to be removed after Cantera 2.6.\n"
+                "These reactions can be constructed by passing a 'ChebyshevRate' object "
+                "as the 'rate' argument to the 'Reaction' class.")
+            rxn_type = self._reaction_type + "-legacy"
             spec = {"equation": equation, "type": rxn_type}
             if isinstance(rate, dict):
-                spec["temperature-range"] = [rate["Tmin"], rate["Tmax"]]
-                spec["pressure-range"] = [rate["Pmin"], rate["Pmax"]]
-                spec["data"] = rate["data"]
-            elif not legacy and (isinstance(rate, ChebyshevRate) or rate is None):
-                pass
+                for key, value in rate.items():
+                    spec[key.replace("_", "-")] = value
             else:
                 raise TypeError("Invalid rate definition")
 
@@ -1417,34 +2223,16 @@ cdef class ChebyshevReaction(Reaction):
                                             deref(kinetics.kinetics))
             self.reaction = self._reaction.get()
 
-            if not legacy and isinstance(rate, ChebyshevRate):
-                self.rate = rate
-
-    property rate:
-        """ Get/Set the `ChebyshevRate` rate coefficients for this reaction. """
-        def __get__(self):
-            if self.uses_legacy:
-                raise AttributeError("Legacy implementation does not use rate property.")
-            return ChebyshevRate.wrap(self.cr().rate())
-        def __set__(self, ChebyshevRate rate):
-            if self.uses_legacy:
-                raise AttributeError("Legacy implementation does not use rate property.")
-            self.cr().setRate(rate._base)
-
     property Tmin:
         """
         Minimum temperature [K] for the Chebyshev fit
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.Tmin`.
+             Replaced by property `ChebyshevRate.temperature_range[0]`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self.cr2().rate.Tmin()
-
-            warnings.warn(self._deprecation_warning("Tmin"), DeprecationWarning)
-            return self.rate.Tmin
+            return self.cxx_object2().rate.Tmin()
 
     property Tmax:
         """
@@ -1452,14 +2240,10 @@ cdef class ChebyshevReaction(Reaction):
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.Tmax`.
+             Replaced by property `ChebyshevRate.temperature_range[1]`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self.cr2().rate.Tmax()
-
-            warnings.warn(self._deprecation_warning("Tmax"), DeprecationWarning)
-            return self.rate.Tmax
+            return self.cxx_object2().rate.Tmax()
 
     property Pmin:
         """
@@ -1467,28 +2251,20 @@ cdef class ChebyshevReaction(Reaction):
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.Pmin`.
+             Replaced by property `ChebyshevRate.pressure_range[0]`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self.cr2().rate.Pmin()
-
-            warnings.warn(self._deprecation_warning("Pmin"), DeprecationWarning)
-            return self.rate.Pmin
+            return self.cxx_object2().rate.Pmin()
 
     property Pmax:
         """ Maximum pressure [Pa] for the Chebyshev fit
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.Pmax`.
+             Replaced by property `ChebyshevRate.pressure_range[1]`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self.cr2().rate.Pmax()
-
-            warnings.warn(self._deprecation_warning("Pmax"), DeprecationWarning)
-            return self.rate.Pmax
+            return self.cxx_object2().rate.Pmax()
 
     property nPressure:
         """
@@ -1496,14 +2272,10 @@ cdef class ChebyshevReaction(Reaction):
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.nPressure`.
+             Replaced by property `ChebyshevRate.n_pressure`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self.cr2().rate.nPressure()
-
-            warnings.warn(self._deprecation_warning("nPressure"), DeprecationWarning)
-            return self.rate.n_pressure
+            return self.cxx_object2().rate.nPressure()
 
     property nTemperature:
         """
@@ -1511,20 +2283,10 @@ cdef class ChebyshevReaction(Reaction):
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.nTemperature`.
+             Replaced by property `ChebyshevRate.n_temperature`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self.cr2().rate.nTemperature()
-
-            warnings.warn(
-                self._deprecation_warning("nTemperature"), DeprecationWarning)
-            return self.rate.n_temperature
-
-    cdef _legacy_get_coeffs(self):
-        cdef CxxChebyshevReaction2* r = self.cr2()
-        c = np.fromiter(r.rate.coeffs(), np.double)
-        return c.reshape((r.rate.nTemperature(), r.rate.nPressure()))
+            return self.cxx_object2().rate.nTemperature()
 
     property coeffs:
         """
@@ -1532,17 +2294,24 @@ cdef class ChebyshevReaction(Reaction):
 
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by property `ChebyshevRate.coeffs`.
+             Replaced by property `ChebyshevRate.data`.
         """
         def __get__(self):
-            if self.uses_legacy:
-                return self._legacy_get_coeffs()
+            cdef CxxChebyshevReaction2* r = self.cxx_object2()
+            cdef CxxArray2D cxxcoeffs = r.rate.data()
+            c = np.fromiter(cxxcoeffs.data(), np.double)
+            return c.reshape(cxxcoeffs.nRows(), cxxcoeffs.nColumns(), order="F")
 
-            warnings.warn(self._deprecation_warning("coeffs"), DeprecationWarning)
-            return self.rate.coeffs
+    def set_parameters(self, Tmin, Tmax, Pmin, Pmax, coeffs):
+        """
+        Simultaneously set values for `Tmin`, `Tmax`, `Pmin`, `Pmax`, and
+        `coeffs`.
 
-    cdef _legacy_set_parameters(self, Tmin, Tmax, Pmin, Pmax, coeffs):
-        cdef CxxChebyshevReaction2* r = self.cr2()
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by `ChebyshevRate` constructor.
+        """
+        cdef CxxChebyshevReaction2* r = self.cxx_object2()
 
         cdef CxxArray2D data
         data.resize(len(coeffs), len(coeffs[0]))
@@ -1555,25 +2324,13 @@ cdef class ChebyshevReaction(Reaction):
 
         r.rate = CxxChebyshev(Tmin, Tmax, Pmin, Pmax, data)
 
-    def set_parameters(self, Tmin, Tmax, Pmin, Pmax, coeffs):
+    def __call__(self, float T, float P):
         """
-        Simultaneously set values for `Tmin`, `Tmax`, `Pmin`, `Pmax`, and
-        `coeffs`.
-
         .. deprecated:: 2.6
              To be deprecated with version 2.6, and removed thereafter.
-             Replaced by `ChebyshevRate` constructor.
+             Replaceable by call to `rate` property.
         """
-        if self.uses_legacy:
-            return self._legacy_set_parameters(Tmin, Tmax, Pmin, Pmax, coeffs)
-
-        warnings.warn("Method 'set_parameters' to be removed after Cantera 2.6. "
-            "Method is replaceable by assigning a new 'ChebyshevRate' object to the "
-            "rate property.", DeprecationWarning)
-        self.rate = ChebyshevRate(Tmin, Tmax, Pmin, Pmax, coeffs)
-
-    cdef _legacy_call(self, float T, float P):
-        cdef CxxChebyshevReaction2* r = self.cr2()
+        cdef CxxChebyshevReaction2* r = self.cxx_object2()
         cdef double logT = np.log(T)
         cdef double recipT = 1/T
         cdef double logP = np.log10(P)
@@ -1581,30 +2338,17 @@ cdef class ChebyshevReaction(Reaction):
         r.rate.update_C(&logP)
         return r.rate.updateRC(logT, recipT)
 
-    def __call__(self, float T, float P):
-        """
-        .. deprecated:: 2.6
-             To be deprecated with version 2.6, and removed thereafter.
-             Replaceable by call to `rate` property.
-        """
-        if self.uses_legacy:
-            return self._legacy_call(T, P)
-
-        warnings.warn(
-            self._deprecation_warning("__call__", "method"), DeprecationWarning)
-        return self.rate(T, P)
-
 
 cdef class BlowersMasel:
     """
     A reaction rate coefficient which depends on temperature and enthalpy change
     of the reaction follows Blowers-Masel approximation and modified Arrhenius form
     described in `Arrhenius`. The functions are used by reactions defined using
-    `BlowersMaselReaction` and `BlowersMaselInterfaceReaction`.
+    `BlowersMaselInterfaceReaction`.
     """
     def __cinit__(self, A=0, b=0, E0=0, w=0, init=True):
         if init:
-            self.rate = new CxxBlowersMasel(A, b, E0 / gas_constant, w / gas_constant)
+            self.rate = new CxxBlowersMasel2(A, b, E0 / gas_constant, w / gas_constant)
             self.own_rate = True
             self.reaction = None
         else:
@@ -1616,7 +2360,7 @@ cdef class BlowersMasel:
 
     property pre_exponential_factor:
         """
-        The pre-exponential factor *A* in units of m, kmol, and s raised to
+        The pre-exponential factor ``A`` in units of m, kmol, and s raised to
         powers depending on the reaction order.
         """
         def __get__(self):
@@ -1624,14 +2368,14 @@ cdef class BlowersMasel:
 
     property temperature_exponent:
         """
-        The temperature exponent *b*.
+        The temperature exponent ``b``.
         """
         def __get__(self):
             return self.rate.temperatureExponent()
 
-    def activation_energy(self, float dH):
+    def effective_activation_energy(self, float dH):
         """
-        The activation energy *E* [J/kmol]
+        The effective activation energy ``E`` [J/kmol]
 
         :param dH: The enthalpy of reaction [J/kmol] at the current temperature
         """
@@ -1640,14 +2384,14 @@ cdef class BlowersMasel:
     property bond_energy:
         """
         Average bond dissociation energy of the bond being formed and broken
-        in the reaction *E* [J/kmol].
+        in the reaction ``E`` [J/kmol].
         """
         def __get__(self):
             return self.rate.bondEnergy() * gas_constant
 
     property intrinsic_activation_energy:
         """
-        The intrinsic activation energy *E0* [J/kmol].
+        The intrinsic activation energy ``E0`` [J/kmol].
         """
         def __get__(self):
             return self.rate.activationEnergy_R0() * gas_constant
@@ -1663,40 +2407,67 @@ cdef class BlowersMasel:
         return self.rate.updateRC(logT, recipT, dH)
 
 
-cdef wrapBlowersMasel(CxxBlowersMasel* rate, Reaction reaction):
+cdef wrapBlowersMasel(CxxBlowersMasel2* rate, Reaction reaction):
     r = BlowersMasel(init=False)
     r.rate = rate
     r.reaction = reaction
     return r
 
 
-cdef class BlowersMaselReaction(Reaction):
+cdef class TwoTempPlasmaReaction(Reaction):
     """
-    A reaction which follows mass-action kinetics with Blowers Masel
-    reaction rate.
+    A reaction which rate coefficient depends on both gas and electron temperature
+
+    An example for the definition of an `TwoTempPlasmaReaction` object is given as::
+
+        rxn = TwoTempPlasmaReaction(
+            equation="O2 + E <=> O2-",
+            rate={"A": 17283, "b": -3.1, "Ea-gas": -5820088, "Ea-electron": 10808733},
+            kinetics=gas)
+
+    The YAML description corresponding to this reaction is::
+
+        equation: O2 + E <=> O2-
+        type: two-temperature-plasma
+        rate-constant: {A: 17283, b: -3.1, Ea-gas: -700 K, Ea-electron: 1300 K}
     """
-    _reaction_type = "Blowers-Masel"
+    _reaction_type = "two-temperature-plasma"
+
+    def __init__(self, reactants=None, products=None, rate=None, *, equation=None,
+                 Kinetics kinetics=None, init=True, **kwargs):
+
+        if reactants and products and not equation:
+            equation = self.equation
+
+        if init and equation and kinetics:
+            rxn_type = self._reaction_type
+            spec = {"equation": equation, "type": rxn_type}
+            if isinstance(rate, dict):
+                replaced_rate = {}
+                for key, value in rate.items():
+                    replaced_rate[key.replace("_", "-")] = value
+                spec["rate-constant"] = replaced_rate
+            elif rate is None or isinstance(rate, TwoTempPlasmaRate):
+                pass
+            else:
+                raise TypeError("Invalid rate definition")
+
+            self._reaction = CxxNewReaction(dict_to_anymap(spec),
+                                            deref(kinetics.kinetics))
+            self.reaction = self._reaction.get()
+
+        if isinstance(rate, TwoTempPlasmaRate):
+            self.rate = rate
 
     property rate:
-        """ Get/Set the `Arrhenius` rate coefficient for this reaction. """
+        """ Get/Set the `TwoTempPlasmaRate` rate coefficients for this reaction. """
         def __get__(self):
-            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
-            return wrapBlowersMasel(&(r.rate), self)
-        def __set__(self, BlowersMasel rate):
-            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
-            r.rate = deref(rate.rate)
-
-    property allow_negative_pre_exponential_factor:
-        """
-        Get/Set whether the rate coefficient is allowed to have a negative
-        pre-exponential factor.
-        """
-        def __get__(self):
-            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
-            return r.allow_negative_pre_exponential_factor
-        def __set__(self, allow):
-            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
-            r.allow_negative_pre_exponential_factor = allow
+            cdef CxxTwoTempPlasmaReaction* r = <CxxTwoTempPlasmaReaction*>self.reaction
+            return TwoTempPlasmaRate.wrap(r.rate())
+        def __set__(self, rate):
+            cdef CxxTwoTempPlasmaReaction* r = <CxxTwoTempPlasmaReaction*>self.reaction
+            cdef TwoTempPlasmaRate rate_ = rate
+            r.setRate(rate_._rate)
 
 
 cdef class InterfaceReaction(ElementaryReaction):
@@ -1776,12 +2547,44 @@ cdef class InterfaceReaction(ElementaryReaction):
             r.sticking_species = stringify(species)
 
 
-cdef class BlowersMaselInterfaceReaction(BlowersMaselReaction):
+cdef class BlowersMaselInterfaceReaction(Reaction):
     """
     A reaction occurring on an `Interface` (i.e. a surface or an edge)
     with the rate parameterization of `BlowersMasel`.
     """
     _reaction_type = "surface-Blowers-Masel"
+
+    def __init__(self, reactants=None, products=None, *, equation=None,
+                 Kinetics kinetics=None, init=True, legacy=False, **kwargs):
+        if not init:
+            return
+
+        if reactants and products:
+            self.reactants = reactants
+            self.products = products
+        elif equation:
+            self.reaction.setEquation(stringify(equation))
+
+    cdef CxxBlowersMaselInterfaceReaction* cxx_object2(self):
+        return <CxxBlowersMaselInterfaceReaction*>self.reaction
+
+    property rate:
+        """ Get/Set the `BlowersMaselRate` rate coefficients for this reaction. """
+        def __get__(self):
+            return wrapBlowersMasel(&(self.cxx_object2().rate), self)
+        def __set__(self, BlowersMasel rate):
+            cdef CxxBlowersMaselInterfaceReaction* r = self.cxx_object2()
+            r.rate = deref(rate.rate)
+
+    property allow_negative_pre_exponential_factor:
+        """
+        Get/Set whether the rate coefficient is allowed to have a negative
+        pre-exponential factor.
+        """
+        def __get__(self):
+            return self.cxx_object2().allow_negative_pre_exponential_factor
+        def __set__(self, allow):
+            self.cxx_object2().allow_negative_pre_exponential_factor = allow
 
     property coverage_deps:
         """
@@ -1865,8 +2668,11 @@ cdef class CustomReaction(Reaction):
     """
     _reaction_type = "custom-rate-function"
 
-    def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
-                 init=True, **kwargs):
+    def __init__(self, reactants=None, products=None, rate=None, *, equation=None,
+                 Kinetics kinetics=None, init=True, **kwargs):
+
+        if reactants and products and not equation:
+            equation = self.equation
 
         if init and equation and kinetics:
 
@@ -1875,7 +2681,11 @@ cdef class CustomReaction(Reaction):
             self._reaction = CxxNewReaction(dict_to_anymap(spec),
                                             deref(kinetics.kinetics))
             self.reaction = self._reaction.get()
-            self.rate = CustomRate(rate)
+            if not isinstance(rate, CustomRate):
+                rate = CustomRate(rate)
+
+        if rate is not None:
+            self.rate = rate
 
     property rate:
         """ Get/Set the `CustomRate` object for this reaction. """
@@ -1884,4 +2694,4 @@ cdef class CustomReaction(Reaction):
         def __set__(self, CustomRate rate):
             self._rate = rate
             cdef CxxCustomFunc1Reaction* r = <CxxCustomFunc1Reaction*>self.reaction
-            r.setRate(self._rate._base)
+            r.setRate(self._rate._rate)

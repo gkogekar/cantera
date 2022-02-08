@@ -133,11 +133,14 @@ public:
         return m_fixedtemp[j];
     }
 
-    // @}
+    //! @}
 
     virtual std::string componentName(size_t n) const;
 
     virtual size_t componentIndex(const std::string& name) const;
+
+    //! Returns true if the specified component is an active part of the solver state
+    virtual bool componentActive(size_t n) const;
 
     //! Print the solution.
     virtual void showSolution(const doublereal* x);
@@ -157,6 +160,9 @@ public:
     virtual void restore(const XML_Node& dom, doublereal* soln,
                          int loglevel);
 
+    virtual AnyMap serialize(const double* soln) const;
+    virtual void restore(const AnyMap& state, double* soln, int loglevel);
+
     //! Set flow configuration for freely-propagating flames, using an internal
     //! point with a fixed temperature as the condition to determine the inlet
     //! mass flux.
@@ -175,7 +181,7 @@ public:
     //! Return the type of flow domain being represented, either "Free Flame" or
     //! "Axisymmetric Stagnation".
     //! @see setFreeFlow setAxisymmetricFlow
-    virtual std::string flowType() {
+    virtual std::string flowType() const {
         if (m_type == cFreeFlow) {
             return "Free Flame";
         } else if (m_type == cAxisymmetricStagnationFlow) {

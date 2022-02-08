@@ -11,9 +11,6 @@
 
 #include <boost/math/tools/roots.hpp>
 
-#define _USE_MATH_DEFINES
-#include <math.h>
-
 using namespace std;
 namespace bmt = boost::math::tools;
 
@@ -107,12 +104,12 @@ double PengRobinson::cp_mole() const
     _updateReferenceStateThermo();
     double T = temperature();
     double mv = molarVolume();
-    double vpb = mv + (1 + M_SQRT2)*m_b;
-    double vmb = mv + (1 - M_SQRT2)*m_b;
+    double vpb = mv + (1 + Sqrt2) * m_b;
+    double vmb = mv + (1 - Sqrt2) * m_b;
     calculatePressureDerivatives();
     double cpref = GasConstant * mean_X(m_cp0_R);
     double dHdT_V = cpref + mv * m_dpdT - GasConstant
-                    + 1.0 / (2.0 * M_SQRT2 * m_b) * log(vpb / vmb) * T * d2aAlpha_dT2();
+                    + 1.0 / (2.0 * Sqrt2 * m_b) * log(vpb / vmb) * T * d2aAlpha_dT2();
     return dHdT_V - (mv + T * m_dpdT / m_dpdV) * m_dpdT;
 }
 
@@ -144,8 +141,8 @@ double PengRobinson::standardConcentration(size_t k) const
 void PengRobinson::getActivityCoefficients(double* ac) const
 {
     double mv = molarVolume();
-    double vpb2 = mv + (1 + M_SQRT2)*m_b;
-    double vmb2 = mv + (1 - M_SQRT2)*m_b;
+    double vpb2 = mv + (1 + Sqrt2) * m_b;
+    double vmb2 = mv + (1 - Sqrt2) * m_b;
     double vmb = mv - m_b;
     double pres = pressure();
 
@@ -156,7 +153,7 @@ void PengRobinson::getActivityCoefficients(double* ac) const
         }
     }
     double num = 0;
-    double denom = 2 * M_SQRT2 * m_b * m_b;
+    double denom = 2 * Sqrt2 * m_b * m_b;
     double denom2 = m_b * (mv * mv + 2 * mv * m_b - m_b * m_b);
     double RTkelvin = RT();
     for (size_t k = 0; k < m_kk; k++) {
@@ -185,8 +182,8 @@ void PengRobinson::getChemPotentials(double* mu) const
 
     double mv = molarVolume();
     double vmb = mv - m_b;
-    double vpb2 = mv + (1 + M_SQRT2)*m_b;
-    double vmb2 = mv + (1 - M_SQRT2)*m_b;
+    double vpb2 = mv + (1 + Sqrt2) * m_b;
+    double vmb2 = mv + (1 - Sqrt2) * m_b;
 
     for (size_t k = 0; k < m_kk; k++) {
         m_pp[k] = 0.0;
@@ -196,7 +193,7 @@ void PengRobinson::getChemPotentials(double* mu) const
     }
     double pres = pressure();
     double refP = refPressure();
-    double denom = 2 * M_SQRT2 * m_b * m_b;
+    double denom = 2 * Sqrt2 * m_b * m_b;
     double denom2 = m_b * (mv * mv + 2 * mv * m_b - m_b * m_b);
 
     for (size_t k = 0; k < m_kk; k++) {
@@ -223,8 +220,8 @@ void PengRobinson::getPartialMolarEnthalpies(double* hbar) const
     double T = temperature();
     double mv = molarVolume();
     double vmb = mv - m_b;
-    double vpb2 = mv + (1 + M_SQRT2)*m_b;
-    double vmb2 = mv + (1 - M_SQRT2)*m_b;
+    double vpb2 = mv + (1 + Sqrt2) * m_b;
+    double vmb2 = mv + (1 - Sqrt2) * m_b;
     double daAlphadT = daAlpha_dT();
 
     for (size_t k = 0; k < m_kk; k++) {
@@ -248,13 +245,13 @@ void PengRobinson::getPartialMolarEnthalpies(double* hbar) const
     double fac = T * daAlphadT - m_aAlpha_mix;
     calculatePressureDerivatives();
     double fac2 = mv + T * m_dpdT / m_dpdV;
-    double fac3 = 2 * M_SQRT2 * m_b * m_b;
+    double fac3 = 2 * Sqrt2 * m_b * m_b;
     double fac4 = 0;
     for (size_t k = 0; k < m_kk; k++) {
         fac4 = T*tmp[k] -2 * m_pp[k];
         double hE_v = mv * m_dpdni[k] - RTkelvin - m_b_coeffs[k] / fac3  * log(vpb2 / vmb2) * fac
-                     + (mv * m_b_coeffs[k]) /(m_b * denom) * fac 
-                     + 1/(2 * M_SQRT2 * m_b) * log(vpb2 / vmb2) * fac4;
+                     + (mv * m_b_coeffs[k]) /(m_b * denom) * fac
+                     + 1/(2 * Sqrt2 * m_b) * log(vpb2 / vmb2) * fac4;
         hbar[k] = hbar[k] + hE_v;
         hbar[k] -= fac2 * m_dpdni[k];
     }
@@ -348,123 +345,85 @@ bool PengRobinson::addSpecies(shared_ptr<Species> spec)
     return added;
 }
 
-vector<double> PengRobinson::getCoeff(const std::string& iName)
-{
-    vector_fp spCoeff{ NAN, NAN, NAN };
-
-    // Get number of species in the database
-    // open xml file critProperties.xml
-    XML_Node* doc = get_XML_File("critProperties.xml");
-    size_t nDatabase = doc->nChildren();
-
-    // Loop through all species in the database and attempt to match supplied
-    // species to each. If present, calculate pureFluidParameters a_k and b_k
-    // based on crit properties T_c and P_c:
-    for (size_t isp = 0; isp < nDatabase; isp++) {
-        XML_Node& acNodeDoc = doc->child(isp);
-        std::string iNameLower = toLowerCopy(iName);
-        std::string dbName = toLowerCopy(acNodeDoc.attrib("name"));
-
-        // Attempt to match provided species iName to current database species
-        //  dbName:
-        if (iNameLower == dbName) {
-            // Read from database and calculate a and b coefficients
-            double vParams;
-            double T_crit = 0.0, P_crit = 0.0, w_ac = 0.0;
-
-            if (acNodeDoc.hasChild("Tc")) {
-                vParams = 0.0;
-                XML_Node& xmlChildCoeff = acNodeDoc.child("Tc");
-                if (xmlChildCoeff.hasAttrib("value")) {
-                    std::string critTemp = xmlChildCoeff.attrib("value");
-                    vParams = strSItoDbl(critTemp);
-                }
-                if (vParams <= 0.0) { //Assuming that Pc and Tc are non zero.
-                    throw CanteraError("PengRobinson::getCoeff",
-                        "Critical Temperature must be positive");
-                }
-                T_crit = vParams;
-            }
-            if (acNodeDoc.hasChild("Pc")) {
-                vParams = 0.0;
-                XML_Node& xmlChildCoeff = acNodeDoc.child("Pc");
-                if (xmlChildCoeff.hasAttrib("value")) {
-                    std::string critPressure = xmlChildCoeff.attrib("value");
-                    vParams = strSItoDbl(critPressure);
-                }
-                if (vParams <= 0.0) { //Assuming that Pc and Tc are non zero.
-                    throw CanteraError("PengRobinson::getCoeff",
-                        "Critical Pressure must be positive");
-                }
-                P_crit = vParams;
-            }
-            if (acNodeDoc.hasChild("omega")) {
-                vParams = 0.0;
-                XML_Node& xmlChildCoeff = acNodeDoc.child("omega");
-                if (xmlChildCoeff.hasChild("value")) {
-                    std::string acentric_factor = xmlChildCoeff.attrib("value");
-                    vParams = strSItoDbl(acentric_factor);
-                }
-                w_ac = vParams;
-            }
-
-            spCoeff[0] = omega_a * (GasConstant * GasConstant) * (T_crit * T_crit) / P_crit; //coeff a
-            spCoeff[1] = omega_b * GasConstant * T_crit / P_crit; // coeff b
-            spCoeff[2] = w_ac; // acentric factor
-            break;
-        }
-    }
-    // If the species is not present in the database, throw an error 
-    if(isnan(spCoeff[0]))
-    {
-        throw CanteraError("PengRobinson::getCoeff",
-            "Species '{}' is not present in the database", iName);
-    }
-    return spCoeff;
-}
-
 void PengRobinson::initThermo()
 {
-    for (auto& item : m_species) {
-        // Read a and b coefficients and acentric factor w_ac from species input
-        // information, specified in a YAML input file.
-        if (item.second->input.hasKey("equation-of-state")) {
-            auto eos = item.second->input["equation-of-state"].getMapWhere(
-                "model", "Peng-Robinson");
-            double a0 = 0;
-            if (eos["a"].isScalar()) {
-                a0 = eos.convert("a", "Pa*m^6/kmol^2");
-            }
-            double b = eos.convert("b", "m^3/kmol");
-            // unitless acentric factor:
-            double w = eos["acentric-factor"].asDouble();
+    // Contents of 'critical-properties.yaml', loaded later if needed
+    AnyMap critPropsDb;
+    std::unordered_map<std::string, AnyMap*> dbSpecies;
 
-            setSpeciesCoeffs(item.first, a0, b, w);
+    for (auto& item : m_species) {
+        auto& data = item.second->input;
+        size_t k = speciesIndex(item.first);
+        if (m_a_coeffs(k, k) != 0.0) {
+            continue;
+        }
+        bool foundCoeffs = false;
+
+        if (data.hasKey("equation-of-state") &&
+            data["equation-of-state"].hasMapWhere("model", "Peng-Robinson"))
+        {
+            // Read a and b coefficients and acentric factor w_ac from species input
+            // information, specified in a YAML input file.
+            auto eos = data["equation-of-state"].getMapWhere(
+                "model", "Peng-Robinson");
+            if (eos.hasKey("a") && eos.hasKey("b") && eos.hasKey("acentric-factor")) {
+                double a0 = eos.convert("a", "Pa*m^6/kmol^2");
+                double b = eos.convert("b", "m^3/kmol");
+                // unitless acentric factor:
+                double w = eos["acentric-factor"].asDouble();
+                setSpeciesCoeffs(item.first, a0, b, w);
+                foundCoeffs = true;
+            }
+
             if (eos.hasKey("binary-a")) {
                 AnyMap& binary_a = eos["binary-a"].as<AnyMap>();
                 const UnitSystem& units = binary_a.units();
                 for (auto& item2 : binary_a) {
-                    double a0 = 0;
-                    if (item2.second.isScalar()) {
-                        a0 = units.convert(item2.second, "Pa*m^6/kmol^2");
-                    }
+                    double a0 = units.convert(item2.second, "Pa*m^6/kmol^2");
                     setBinaryCoeffs(item.first, item2.first, a0);
                 }
             }
-        } else {
-            // Check if a and b are already populated for this species (only the
-            // diagonal elements of a). If not, then search 'critProperties.xml'
-            // to find critical temperature and pressure to calculate a and b.
-            size_t k = speciesIndex(item.first);
-            if (m_a_coeffs(k, k) == 0.0) {
-                vector<double> coeffs = getCoeff(item.first);
-
-                // Check if species was found in the database of critical
-                // properties, and assign the results
-                if (!isnan(coeffs[0])) {
-                    setSpeciesCoeffs(item.first, coeffs[0], coeffs[1], coeffs[2]);
-                }
+            if (foundCoeffs) {
+                continue;
             }
+        }
+
+        // Coefficients have not been populated from model-specific input
+        double Tc = NAN, Pc = NAN, omega_ac = NAN;
+        if (data.hasKey("critical-parameters")) {
+            // Use critical state information stored in the species entry to
+            // calculate a, b, and the acentric factor.
+            auto& critProps = data["critical-parameters"].as<AnyMap>();
+            Tc = critProps.convert("critical-temperature", "K");
+            Pc = critProps.convert("critical-pressure", "Pa");
+            omega_ac = critProps["acentric-factor"].asDouble();
+        } else {
+            // Search 'crit-properties.yaml' to find Tc and Pc. Load data if needed.
+            if (critPropsDb.empty()) {
+                critPropsDb = AnyMap::fromYamlFile("critical-properties.yaml");
+                dbSpecies = critPropsDb["species"].asMap("name");
+            }
+
+            // All names in critical-properties.yaml are upper case
+            auto ucName = boost::algorithm::to_upper_copy(item.first);
+            if (dbSpecies.count(ucName)) {
+                auto& spec = *dbSpecies.at(ucName);
+                auto& critProps = spec["critical-parameters"].as<AnyMap>();
+                Tc = critProps.convert("critical-temperature", "K");
+                Pc = critProps.convert("critical-pressure", "Pa");
+                omega_ac = critProps["acentric-factor"].asDouble();
+            }
+        }
+
+        // Check if critical properties were found in either location
+        if (!isnan(Tc)) {
+            double a = omega_a * std::pow(GasConstant * Tc, 2) / Pc;
+            double b = omega_b * GasConstant * Tc / Pc;
+            setSpeciesCoeffs(item.first, a, b, omega_ac);
+        } else {
+            throw InputFileError("PengRobinson::initThermo", data,
+            "No Peng-Robinson model parameters or critical properties found for "
+            "species '{}'", item.first);
         }
     }
 }
@@ -475,9 +434,9 @@ double PengRobinson::sresid() const
     double hh = m_b / molarV;
     double zz = z();
     double alpha_1 = daAlpha_dT();
-    double vpb = molarV + (1.0 + M_SQRT2) * m_b;
-    double vmb = molarV + (1.0 - M_SQRT2) * m_b;
-    double fac = alpha_1 / (2.0 * M_SQRT2 * m_b);
+    double vpb = molarV + (1.0 + Sqrt2) * m_b;
+    double vmb = molarV + (1.0 - Sqrt2) * m_b;
+    double fac = alpha_1 / (2.0 * Sqrt2 * m_b);
     double sresid_mol_R = log(zz*(1.0 - hh)) + fac * log(vpb / vmb) / GasConstant;
     return GasConstant * sresid_mol_R;
 }
@@ -488,9 +447,9 @@ double PengRobinson::hresid() const
     double zz = z();
     double aAlpha_1 = daAlpha_dT();
     double T = temperature();
-    double vpb = molarV + (1 + M_SQRT2) * m_b;
-    double vmb = molarV + (1 - M_SQRT2) * m_b;
-    double fac = 1 / (2.0 * M_SQRT2 * m_b);
+    double vpb = molarV + (1 + Sqrt2) * m_b;
+    double vmb = molarV + (1 - Sqrt2) * m_b;
+    double fac = 1 / (2.0 * Sqrt2 * m_b);
     return GasConstant * T * (zz - 1.0) + fac * log(vpb / vmb) * (T * aAlpha_1 - m_aAlpha_mix);
 }
 
@@ -694,7 +653,7 @@ double PengRobinson::daAlpha_dT() const
     //Calculate mixture derivative
     for (size_t i = 0; i < m_kk; i++) {
         for (size_t j = 0; j < m_kk; j++) {
-            daAlphadT += moleFractions_[i] * moleFractions_[j] * 0.5 * m_aAlpha_binary(i, j) 
+            daAlphadT += moleFractions_[i] * moleFractions_[j] * 0.5 * m_aAlpha_binary(i, j)
                                              * (m_dalphadT[i] / m_alpha[i] + m_dalphadT[j] / m_alpha[j]);
         }
     }

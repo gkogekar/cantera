@@ -35,7 +35,10 @@ public:
                    double quantity=0);
 
     //! Create an object with the specified dimensions
-    explicit Units(const std::string& name);
+    //! @param units        A string representation of the units. See UnitSystem
+    //!                     for a description of the formatting options.
+    //! @param force_unity  ensure that conversion factor is equal to one
+    explicit Units(const std::string& units, bool force_unity=false);
 
     //! Returns `true` if the specified Units are dimensionally consistent
     bool convertible(const Units& other) const;
@@ -49,13 +52,18 @@ public:
     Units& operator*=(const Units& other);
 
     //! Provide a string representation of these Units
-    std::string str() const;
+    //! @param skip_unity  do not print '1' if conversion factor is equal to one
+    std::string str(bool skip_unity=true) const;
 
     //! Raise these Units to a power, changing both the conversion factor and
     //! the dimensions of these Units.
-    Units pow(double expoonent) const;
+    Units pow(double exponent) const;
 
     bool operator==(const Units& other) const;
+
+    //! Return dimension of primary unit component
+    //! ("mass", "length", "time", "temperature", "current" or "quantity")
+    double dimension(const std::string& primary) const;
 
 private:
     //! Scale the unit by the factor `k`
@@ -72,6 +80,56 @@ private:
     double m_energy_dim; //!< pseudo-dimension to track explicit energy units
 
     friend class UnitSystem;
+};
+
+
+//! Unit aggregation utility
+/*!
+ *  Provides functions for updating and calculating effective units from a stack
+ *  of unit-exponent pairs. Matching units are aggregated, where a standard unit
+ *  simplifies access when joining exponents. The utility is used in the context
+ *  of effective reaction rate units.
+ *
+ * @internal Helper utility class.
+ *
+ * @warning This class is an experimental part of the %Cantera API and
+ *    may be changed or removed without notice.
+ */
+struct UnitStack
+{
+    UnitStack(const Units& standardUnits) {
+        stack.reserve(2); // covers memory requirements for most applications
+        stack.emplace_back(standardUnits, 0.);
+    }
+
+    //! Alternative constructor allows for direct assignment of vector
+    UnitStack(std::initializer_list<std::pair<Units, double>> units)
+        : stack(units) {}
+
+    //! Size of UnitStack
+    size_t size() const { return stack.size(); }
+
+    //! Get standard unit used by UnitStack
+    Units standardUnits() const;
+
+    //! Set standard units
+    void setStandardUnits(Units& standardUnits);
+
+    //! Effective exponent of standard unit
+    double standardExponent() const;
+
+    //! Join (update) exponent of standard units, where the updated exponent is
+    //! the sum of the pre-existing exponent and the exponent passed as the argument.
+    void join(double exponent);
+
+    //! Update exponent of item with matching units; if it does not exist,
+    //! add unit-exponent pair at end of stack
+    void update(const Units& units, double exponent);
+
+    //! Calculate product of units-exponent stack
+    Units product() const;
+
+    std::vector<std::pair<Units, double>> stack; //!< Stack uses vector of pairs
 };
 
 
@@ -108,6 +166,9 @@ public:
     //! Default constructor for unit system (needed as VS2019 does not
     //! recognize an optional argument with a default value)
     UnitSystem() : UnitSystem({}) {}
+
+    //! Return default units used by the unit system
+    std::map<std::string, std::string> defaults() const;
 
     //! Set the default units to convert from when explicit units are not
     //! provided. Defaults can be set for mass, length, time, quantity, energy,

@@ -7,6 +7,10 @@
 #include "cantera/base/xml.h"
 #include "application.h"
 #include "units.h"
+#include "cantera/base/AnyMap.h"
+#ifdef CT_USE_DEMANGLE
+  #include <boost/core/demangle.hpp>
+#endif
 
 using namespace std;
 
@@ -71,6 +75,21 @@ void make_deprecation_warnings_fatal()
     app()->make_deprecation_warnings_fatal();
 }
 
+void suppress_warnings()
+{
+    app()->suppress_warnings();
+}
+
+bool warnings_suppressed()
+{
+    return app()->warnings_suppressed();
+}
+
+void make_warnings_fatal()
+{
+    app()->make_warnings_fatal();
+}
+
 void suppress_thermo_warnings(bool suppress)
 {
     app()->suppress_thermo_warnings(suppress);
@@ -79,6 +98,16 @@ void suppress_thermo_warnings(bool suppress)
 bool thermo_warnings_suppressed()
 {
     return app()->thermo_warnings_suppressed();
+}
+
+void use_legacy_rate_constants(bool legacy)
+{
+    app()->use_legacy_rate_constants(legacy);
+}
+
+bool legacy_rate_constants_used()
+{
+    return app()->legacy_rate_constants_used();
 }
 
 // **************** Global Data ****************
@@ -159,6 +188,8 @@ doublereal actEnergyToSI(const std::string& unit)
 
 string canteraRoot()
 {
+    warn_deprecated("canteraRoot",
+                    "Unused in Cantera. To be removed after Cantera 2.6");
     char* ctroot = getenv("CANTERA_ROOT");
     if (ctroot != 0) {
         return string(ctroot);
@@ -169,6 +200,15 @@ string canteraRoot()
     return "";
 #endif
 
+}
+
+bool debugModeEnabled()
+{
+#ifdef NDEBUG
+    return false;
+#else
+    return true;
+#endif
 }
 
 //! split a string at a '#' sign. Used to separate a file name from an id string.
@@ -252,5 +292,37 @@ XML_Node* get_XML_NameID(const std::string& nameTarget,
 }
 
 std::vector<FactoryBase*> FactoryBase::s_vFactoryRegistry;
+
+std::string demangle(const std::type_info& type)
+{
+    static std::map<std::string, std::string> typenames = {
+        {typeid(void).name(), "void"},
+        {typeid(double).name(), "double"},
+        {typeid(long int).name(), "long int"},
+        {typeid(bool).name(), "bool"},
+        {typeid(std::string).name(), "string"},
+        {typeid(vector<AnyValue>).name(), "vector<AnyValue>"},
+        {typeid(vector<AnyMap>).name(), "vector<AnyMap>"},
+        {typeid(vector<double>).name(), "vector<double>"},
+        {typeid(vector<long int>).name(), "vector<long int>"},
+        {typeid(vector<bool>).name(), "vector<bool>"},
+        {typeid(vector<string>).name(), "vector<string>"},
+        {typeid(vector<vector<double>>).name(), "vector<vector<double>>"},
+        {typeid(vector<vector<long int>>).name(), "vector<vector<long int>>"},
+        {typeid(vector<vector<bool>>).name(), "vector<vector<bool>>"},
+        {typeid(vector<vector<string>>).name(), "vector<vector<string>>"},
+        {typeid(AnyMap).name(), "AnyMap"},
+    };
+
+    if (typenames.count(type.name())) {
+        return typenames[type.name()];
+    } else {
+        #ifdef CT_USE_DEMANGLE
+            return boost::core::demangle(type.name());
+        #else
+            return type.name();
+        #endif
+    }
+}
 
 }

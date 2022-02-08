@@ -25,7 +25,7 @@ else:
     import pandas as _pandas
 
 
-class Solution(ThermoPhase, Kinetics, Transport):
+class Solution(Transport, Kinetics, ThermoPhase):
     """
     A class for chemically-reacting solutions. Instances can be created to
     represent any type of solution -- a mixture of gases, a liquid solution, or
@@ -62,9 +62,9 @@ class Solution(ThermoPhase, Kinetics, Transport):
     objects which can themselves either be imported from input files or defined
     directly in Python::
 
-        spec = ct.Species.listFromFile('gri30.yaml')
+        spec = ct.Species.list_from_file("gri30.yaml")
         spec_gas = ct.Solution(thermo='IdealGas', species=spec)
-        rxns = ct.Reaction.listFromFile('gri30.yaml', spec_gas)
+        rxns = ct.Reaction.list_from_file("gri30.yaml", spec_gas)
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=spec, reactions=rxns, name='my_custom_name')
 
@@ -86,22 +86,29 @@ class Solution(ThermoPhase, Kinetics, Transport):
     and `mechanism_reduction.py <https://cantera.org/examples/python/kinetics/mechanism_reduction.py.html>`_.
 
     In addition, `Solution` objects can be constructed by passing the text of
-    the CTI or XML phase definition in directly, using the ``source`` keyword
+    the YAML phase definition in directly, using the ``yaml`` keyword
     argument::
 
-        cti_def = '''
-            ideal_gas(name='gas', elements='O H Ar',
-                      species='gri30: all',
-                      reactions='gri30: all',
-                      options=['skip_undeclared_elements', 'skip_undeclared_species',
-                               'skip_undeclared_third_bodies'],
-                      initial_state=state(temperature=300, pressure=101325))'''
-        gas = ct.Solution(source=cti_def)
+        yaml_def = '''
+        phases:
+        - name: gas
+          thermo: ideal-gas
+          kinetics: gas
+          elements: [O, H, Ar]
+          species:
+          - gri30.yaml/species: all
+          reactions:
+          - gri30.yaml/reactions: declared-species
+          skip-undeclared-elements: true
+          skip-undeclared-third-bodies: true
+          state: {T: 300, P: 1 atm}
+        '''
+        gas = ct.Solution(yaml=yaml_def)
     """
     __slots__ = ()
 
 
-class Interface(InterfacePhase, InterfaceKinetics):
+class Interface(InterfaceKinetics, InterfacePhase):
     """
     Two-dimensional interfaces.
 
@@ -109,19 +116,27 @@ class Interface(InterfacePhase, InterfaceKinetics):
     3D phases. Class `Interface` defines no methods of its own. All of its
     methods derive from either `InterfacePhase` or `InterfaceKinetics`.
 
-    To construct an `Interface` object, adjacent bulk phases which participate
-    in reactions need to be created and then passed in as a list in the
-    ``adjacent`` argument to the constructor::
+    Constructing an `Interface` object also involves constructing adjacent bulk phases
+    that participate in reactions. This is done automatically if the adjacent phases
+    are specified as part of the 'adjacent-phases' entry in the YAML phase definition::
 
-        gas = ct.Solution('diamond.yaml', name='gas')
-        diamond = ct.Solution('diamond.yaml', name='diamond')
-        diamond_surf = ct.Interface('diamond.yaml', name='diamond_100',
+        diamond_surf = ct.Interface("diamond.yaml", name="diamond_100")
+        gas = diamond_surf.adjacent["gas"]
+        diamond = diamond_surf.adjacent["diamond"]
+
+    This behavior can be overridden by specifying the adjacent phases explicitly,
+    either using their name in the input file, or by constructing corresponding
+    `Solution` objects::
+
+        gas = ct.Solution("diamond.yaml", name="gas")
+        diamond = ct.Solution("diamond.yaml", name="diamond")
+        diamond_surf = ct.Interface("diamond.yaml", name="diamond_100",
                                     adjacent=[gas, diamond])
     """
     __slots__ = ('_phase_indices',)
 
 
-class DustyGas(ThermoPhase, Kinetics, DustyGasTransport):
+class DustyGas(DustyGasTransport, Kinetics, ThermoPhase):
     """
     A composite class which models a gas in a stationary, solid, porous medium.
 
@@ -138,7 +153,7 @@ class Quantity:
     provides several additional capabilities. A `Quantity` object is created
     from a `Solution` with either the mass or number of moles specified::
 
-        >>> gas = ct.Solution('gri30.xml')
+        >>> gas = ct.Solution('gri30.yaml')
         >>> gas.TPX = 300, 5e5, 'O2:1.0, N2:3.76'
         >>> q1 = ct.Quantity(gas, mass=5) # 5 kg of air
 
@@ -195,6 +210,8 @@ class Quantity:
         >>> q3.P
         101325.0
     """
+    __slots__ = ("state", "_phase", "_id", "mass", "constant")
+
     def __init__(self, phase, mass=None, moles=None, constant='UV'):
         self.state = phase.TDY
         self._phase = phase
@@ -798,12 +815,17 @@ class SolutionArray:
                              "non-empty data dictionary")
         labels = list(data.keys())
 
+        shape = data[labels[0]].shape
+        if not shape:
+            # ensure that data with a single entry have appropriate dimensions
+            data = OrderedDict([(k, np.array([v])) for k, v in data.items()])
+        rows = data[labels[0]].shape[0]
+
         for col in data.values():
             if not isinstance(col, np.ndarray):
                 raise TypeError("'SolutionArray.restore_data' only works for "
                                 "dictionaries that contain ndarrays")
 
-            rows = data[labels[0]].shape[0]
             if col.shape[0] != rows:
                 raise ValueError("'SolutionArray.restore_data' requires "
                                  "all data entries to have a consistent "
@@ -833,7 +855,7 @@ class SolutionArray:
                              if s in labels}
 
             # labels that start with prefix (indicating concentration)
-            all_species = [l for l in labels if l.startswith(prefix)]
+            all_species = [l[2:] for l in labels if l.startswith(prefix)]
             if valid_species:
 
                 if len(valid_species) != len(all_species):
@@ -923,7 +945,7 @@ class SolutionArray:
         # ensure that SolutionArray accommodates dimensions
         if self._shape == (0,):
             self._states = [self._phase.state] * rows
-            self._indices = range(rows)
+            self._indices = list(range(rows))
             self._output_dummy = self._indices
             self._shape = (rows,)
 
@@ -1092,7 +1114,7 @@ class SolutionArray:
         """
         if np.lib.NumpyVersion(np.__version__) < "1.14.0":
             # bytestring needs to be converted for columns containing strings
-            data = np.genfromtxt(filename, delimiter=',',
+            data = np.genfromtxt(filename, delimiter=',', deletechars='',
                                  dtype=None, names=True)
             data_dict = OrderedDict()
             for label in data.dtype.names:
@@ -1102,7 +1124,7 @@ class SolutionArray:
                     data_dict[label] = data[label]
         else:
             # the 'encoding' parameter introduced with NumPy 1.14 simplifies import
-            data = np.genfromtxt(filename, delimiter=',',
+            data = np.genfromtxt(filename, delimiter=',', deletechars='',
                                  dtype=None, names=True, encoding=None)
             data_dict = OrderedDict({label: data[label]
                                      for label in data.dtype.names})
@@ -1367,6 +1389,12 @@ class SolutionArray:
         self.restore_data(data, normalize)
 
         return root_attrs
+
+    def __reduce__(self):
+        raise NotImplementedError('SolutionArray object is not picklable')
+
+    def __copy__(self):
+        raise NotImplementedError('SolutionArray object is not copyable')
 
 
 def _state2_prop(name, doc_source):

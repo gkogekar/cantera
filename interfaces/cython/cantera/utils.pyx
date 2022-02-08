@@ -6,6 +6,15 @@ import os
 import warnings
 from cpython.ref cimport PyObject
 import numbers
+import pkg_resources
+
+# avoid explicit dependence of cantera on scipy
+try:
+    pkg_resources.get_distribution('scipy')
+except pkg_resources.DistributionNotFound:
+    _scipy_sparse = ImportError('Method requires a working scipy installation.')
+else:
+    from scipy import sparse as _scipy_sparse
 
 cdef CxxPythonLogger* _logger = new CxxPythonLogger()
 CxxSetLogger(_logger)
@@ -35,9 +44,24 @@ __version__ = pystr(get_cantera_version())
 
 __git_commit__ = pystr(CxxGitCommit())
 
+_USE_SPARSE = False
+
+def debug_mode_enabled():
+    return CxxDebugModeEnabled()
+
 def appdelete():
     """ Delete all global Cantera C++ objects """
     CxxAppdelete()
+
+def use_sparse(sparse=True):
+    """
+    Enable sparse output using `scipy.sparse`. Sparse output requires a working
+    `scipy` installation. Use pip or conda to install `scipy` to enable this method.
+    """
+    global _USE_SPARSE
+    if sparse and isinstance(_scipy_sparse, ImportError):
+        raise _scipy_sparse
+    _USE_SPARSE = sparse
 
 def make_deprecation_warnings_fatal():
     warnings.filterwarnings('error', category=DeprecationWarning,
@@ -45,6 +69,15 @@ def make_deprecation_warnings_fatal():
     warnings.filterwarnings('error', category=DeprecationWarning,
                             message='.*Cantera.*')  # for warnings in Cython code
     Cxx_make_deprecation_warnings_fatal()
+
+def suppress_warnings(): # for warnings in C++ code
+    Cxx_suppress_warnings()
+
+def warnings_suppressed(): # for warnings in C++ code
+    return Cxx_warnings_suppressed()
+
+def make_warnings_fatal():# for warnings in Cython code
+    Cxx_make_warnings_fatal()
 
 def suppress_deprecation_warnings():
     warnings.filterwarnings('ignore', category=DeprecationWarning,
@@ -55,6 +88,28 @@ def suppress_deprecation_warnings():
 
 def suppress_thermo_warnings(pybool suppress=True):
     Cxx_suppress_thermo_warnings(suppress)
+
+def use_legacy_rate_constants(pybool legacy):
+    """
+    Set definition used for rate constant calculation.
+
+    If set to 'False', rate constants of three-body reactions are consistent with
+    conventional definitions. If set to 'True', output for rate constants of
+    three-body reactions is multipied by third-body concentrations (legacy behavior).
+    For the pre-compiled Cantera 2.6 distribution, the default value is set to 'True',
+    which implies no change compared to previous behavior. For user-compiled Cantera,
+    the default behavior can be changed by the SCons flag 'legacy_rate_constants'.
+
+    .. deprecated:: 2.6
+
+        Behavior to change after Cantera 2.6; for Cantera 2.6, rate constants of
+        three-body reactions are multiplied with third-body concentrations
+        (no change to legacy behavior). After Cantera 2.6, results will no longer
+        include third-body concentrations and be consistent with conventional
+        definitions (see Eq. 9.75 in Kee, Coltrin and Glarborg, 'Chemically
+        Reacting Flow', Wiley Interscience, 2003).
+    """
+    Cxx_use_legacy_rate_constants(legacy)
 
 cdef Composition comp_map(X) except *:
     if isinstance(X, (str, bytes)):

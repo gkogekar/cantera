@@ -29,9 +29,10 @@ std::mutex TransportFactory::transport_mutex;
 
 TransportFactory::TransportFactory()
 {
-    reg("", []() { return new Transport(); });
-    addAlias("", "None");
-    addAlias("", "Transport");
+    reg("none", []() { return new Transport(); });
+    addAlias("none", "Transport");
+    addAlias("none", "None");
+    addAlias("none", "");
     reg("unity-Lewis-number", []() { return new UnityLewisTransport(); });
     addAlias("unity-Lewis-number", "UnityLewis");
     reg("mixture-averaged", []() { return new MixTransport(); });
@@ -62,6 +63,15 @@ void TransportFactory::deleteFactory()
 Transport* TransportFactory::newTransport(const std::string& transportModel,
         ThermoPhase* phase, int log_level)
 {
+    if (transportModel != "DustyGas" && canonicalize(transportModel) == "none") {
+        return create(transportModel);
+    }
+    if (!phase) {
+        throw CanteraError("TransportFactory::newTransport",
+            "Valid phase definition required for initialization of "
+            "new '{}' object", transportModel);
+    }
+
     vector_fp state;
     Transport* tr = 0;
     phase->saveState(state);
@@ -94,10 +104,10 @@ Transport* TransportFactory::newTransport(ThermoPhase* phase, int log_level)
     return newTransport(transportModel, phase,log_level);
 }
 
-Transport* newTransportMgr(const std::string& transportModel, ThermoPhase* thermo, int loglevel)
+Transport* newTransportMgr(const std::string& model, ThermoPhase* thermo, int log_level)
 {
     TransportFactory* f = TransportFactory::factory();
-    return f->newTransport(transportModel, thermo, loglevel);
+    return f->newTransport(model, thermo, log_level);
 }
 
 Transport* newDefaultTransportMgr(ThermoPhase* thermo, int loglevel)

@@ -186,13 +186,13 @@ TEST_F(PengRobinson_Test, setTP)
         const double temp = 294 + i*2;
         set_r(0.999);
         test_phase->setState_TP(temp, 5542027.5);
-        EXPECT_NEAR(test_phase->density(),rho1[i],1.e-8);
+        EXPECT_NEAR(test_phase->density(), rho1[i], 1.e-8);
 
         test_phase->setState_TP(temp, 7388370.);
-        EXPECT_NEAR(test_phase->density(),rho2[i],1.e-8);
+        EXPECT_NEAR(test_phase->density(), rho2[i], 1.e-7);
 
         test_phase->setState_TP(temp, 9236712.5);
-        EXPECT_NEAR(test_phase->density(),rho3[i],1.e-8);
+        EXPECT_NEAR(test_phase->density(), rho3[i], 1.e-8);
     }
 }
 
@@ -207,7 +207,7 @@ TEST_F(PengRobinson_Test, getPressure)
     *       b_coeff = 0.077796(RT_crit)/p_crit
     *  The temperature dependent parameter in P-R EoS is calculated as
     *       \alpha = [1 + \kappa(1 - sqrt{T/T_crit}]^2
-    *  kappa is a function calulated based on the accentric factor.
+    *  kappa is a function calculated based on the acentric factor.
     */
 
     double a_coeff = 3.958095109E+5;
@@ -410,6 +410,20 @@ TEST(PengRobinson, lookupSpeciesPropertiesMissing)
     // CH3 is not in the critical properties database, so this should be
     // detected as an error
     EXPECT_THROW(newPhase(phase_def), CanteraError);
+}
+
+TEST(PengRobinson, localCritProperties)
+{
+    // Test calculation based on critical properties stored in the YAML species
+    // definition, in the "critical-parameters" field
+    unique_ptr<ThermoPhase> test(newPhase("thermo-models.yaml", "CO2-PR-params"));
+    test->setState_TPX(400, 1.2e6, "CO2: 1.0");
+    EXPECT_NEAR(test->critTemperature(), 304.128, 1e-5);
+    EXPECT_NEAR(test->critPressure(), 7.3773e6, 1e-4);
+
+    test->setState_TPX(400, 1.2e6, "H2O: 1.0");
+    EXPECT_NEAR(test->critTemperature(), 647.096, 1e-5);
+    EXPECT_NEAR(test->critPressure(), 22.064e6, 1e-4);
 }
 
 };

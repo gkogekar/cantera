@@ -42,6 +42,7 @@ Kinetics* KineticsFactory::newKinetics(XML_Node& phaseData,
 KineticsFactory::KineticsFactory() {
     reg("none", []() { return new Kinetics(); });
     addAlias("none", "Kinetics");
+    addAlias("none", "None");
     reg("gas", []() { return new GasKinetics(); });
     addAlias("gas", "gaskinetics");
     addAlias("gas", "Gas");
@@ -106,7 +107,7 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
     vector<string> sections, rules;
 
     if (phaseNode.hasKey("reactions")) {
-        if (kin.kineticsType() == "Kinetics") {
+        if (kin.kineticsType() == "None") {
             throw InputFileError("addReactions", phaseNode["reactions"],
                 "Phase entry includes a 'reactions' field but does not "
                 "specify a kinetics model.");
@@ -137,7 +138,7 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
                 rules.push_back(item.begin()->second.asString());
             }
         }
-    } else if (kin.kineticsType() != "Kinetics") {
+    } else if (kin.kineticsType() != "None") {
         if (rootNode.hasKey("reactions")) {
             // Default behavior is to add all reactions from the 'reactions'
             // section, if a 'kinetics' model has been specified
@@ -175,19 +176,23 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
                 rootNode.getString("__file__", ""));
             for (const auto& R : reactions[node].asVector<AnyMap>()) {
                 try {
-                    kin.addReaction(newReaction(R, kin));
+                    kin.addReaction(newReaction(R, kin), false);
                 } catch (CanteraError& err) {
-                    format_to(add_rxn_err, "{}", err.what());
+                    fmt_append(add_rxn_err, "{}", err.what());
                 }
             }
         } else {
             // specified section is in the current file
             for (const auto& R : rootNode.at(sections[i]).asVector<AnyMap>()) {
-                try {
-                    kin.addReaction(newReaction(R, kin));
-                } catch (CanteraError& err) {
-                    format_to(add_rxn_err, "{}", err.what());
-                }
+                #ifdef NDEBUG
+                    try {
+                        kin.addReaction(newReaction(R, kin), false);
+                    } catch (CanteraError& err) {
+                        fmt_append(add_rxn_err, "{}", err.what());
+                    }
+                #else
+                    kin.addReaction(newReaction(R, kin), false);
+                #endif
             }
         }
     }
@@ -196,6 +201,8 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
     if (add_rxn_err.size()) {
         throw CanteraError("addReactions", to_string(add_rxn_err));
     }
+
+    kin.resizeReactions();
 }
 
 }

@@ -20,9 +20,9 @@ from email.utils import formatdate
 import argparse
 
 try:
-    import ruamel_yaml as yaml
-except ImportError:
     from ruamel import yaml
+except ImportError:
+    import ruamel_yaml as yaml
 
 # yaml.version_info is a tuple with the three parts of the version
 yaml_version = yaml.version_info
@@ -208,7 +208,7 @@ def units(length = '', quantity = '', mass = '', time = '',
 
 def get_composition(atoms):
     if isinstance(atoms, dict): return atoms
-    a = atoms.replace(',',' ')
+    a = atoms.replace(",", " ").replace(": ", ":")
     toks = a.split()
     d = OrderedDict()
     for t in toks:
@@ -305,7 +305,7 @@ class species:
         else:
             self.thermo = const_cp()
 
-        self.transport = transport
+        self.transport = None if transport == "None" else transport
         self.standard_state = standardState
 
         self.rk_pure = {}
@@ -867,6 +867,8 @@ class chebyshev_reaction(reaction):
             ``id``, ``order``, and ``options`` may be specified as keyword
             arguments, with the same meanings as for class `reaction`.
         """
+        # Remove deprecated '(+M)' third body notation
+        equation = re.sub(r" *\( *\+ *M *\)", "", equation)
         super().__init__(equation, None, **kwargs)
         self.type = 'Chebyshev'
         self.Pmin = Pmin
@@ -1087,15 +1089,11 @@ class phase:
                 rnum = 'declared-species'
             if rnum != 'none':
                 self.reactions.append([datasrc, rnum])
-            if rnum in ('all', 'declared-species', 'none'):
+            if rnum.lower() in ("all", "declared-species", "none"):
                 continue
-            if '*' in rnum:
-                if datasrc != 'reactions':
-                    _printerr("WARNING: Reaction id-pattern matching from remote"
-                        " files not supported ({}: {})".format(datasrc, rnum))
-            else:
-                _printerr("WARNING: Reaction specification"
-                          " '{}' not supported".format(rnum))
+            if datasrc != "reactions":
+                _printerr("WARNING: Reaction id-pattern matching from remote"
+                    " files not supported ({}: {})".format(datasrc, rnum))
 
         self.initial_state = initial_state
 
@@ -1129,33 +1127,54 @@ class phase:
         # Convert reaction pattern matching to use of multiple reaction sections
         for i in range(len(self.reactions)):
             spec = self.reactions[i][1]
-            name = self.name + '-reactions'
-            if '*' in spec and name not in _reactions:
-                pattern = re.compile(spec.replace('*', '.*'))
-                misses = []
-                hits = []
-                for reaction in _reactions['reactions']:
-                    if pattern.match(reaction.id):
-                        hits.append(reaction)
-                    else:
-                        misses.append(reaction)
-                _reactions[name] = hits
-                _reactions['reactions'] = misses
-                self.reactions[i] = [name, 'all']
+            name = self.name + "-reactions"
 
-        if self.kinetics and self.reactions:
-            out['kinetics'] = _newNames[self.kinetics]
-            if len(self.reactions) == 1 and self.reactions[0][0] == 'reactions':
-                if _reactions['reactions']:
-                    out['reactions'] = self.reactions[0][1]
+            if name in _reactions:
+                continue
+            if spec.lower() in ("all", "declared-species", "none"):
+                continue
+
+            pattern = None
+            if "*" in spec:
+                pattern = re.compile(spec.replace("*", ".*"))
+
+            misses = []
+            hits = []
+            for reaction in _reactions['reactions']:
+                if reaction.id == spec:
+                    # exact match (single reaction is specified)
+                    hits.append(reaction)
+                elif pattern and pattern.match(reaction.id):
+                    # regex match (wildcard is specified)
+                    hits.append(reaction)
                 else:
-                    out['reactions'] = 'none'
-            elif all(r[1] == 'all' for r in self.reactions):
-                out['reactions'] = FlowList(r[0] for r in self.reactions)
-            else:
-                out['reactions'] = [BlockMap([(r[0], r[1])]) for r in self.reactions]
+                    misses.append(reaction)
 
-        if self.transport and self.transport != 'None':
+            if not hits:
+                _printerr("WARNING: Unable to generate field '{}'\nfrom reaction "
+                          "specification '{}' ".format(name, self.reactions[i][1]))
+
+            _reactions[name] = hits
+            _reactions["reactions"] = misses
+            self.reactions[i] = [name, "all"]
+
+        if self.kinetics:
+            out['kinetics'] = _newNames[self.kinetics]
+            if self.reactions:
+                if len(self.reactions) == 1 and self.reactions[0][0] == 'reactions':
+                    if _reactions['reactions']:
+                        out['reactions'] = self.reactions[0][1]
+                    else:
+                        out['reactions'] = 'none'
+                elif all(r[1] == 'all' for r in self.reactions):
+                    out['reactions'] = FlowList(r[0] for r in self.reactions)
+                else:
+                    out['reactions'] = [BlockMap([(r[0], r[1])])
+                                        for r in self.reactions]
+            else:
+                out["reactions"] = "none"
+
+        if self.transport:
             out['transport'] = _newNames[self.transport]
 
         if self.comment:
@@ -1185,8 +1204,8 @@ class ideal_gas(phase):
 
         phase.__init__(self, name, elements, species, note, reactions,
                        initial_state, options)
-        self.kinetics = kinetics
-        self.transport = transport
+        self.kinetics = None if kinetics == "None" else kinetics
+        self.transport = None if transport == "None" else transport
         self.thermo_model = 'ideal-gas'
 
 
@@ -1209,7 +1228,7 @@ class stoichiometric_solid(phase):
         self.density = density
         if self.density is None:
             raise InputError('density must be specified.')
-        self.transport = None if transport == 'None' else transport
+        self.transport = None if transport == "None" else transport
 
     def get_yaml(self, out):
         super().get_yaml(out)
@@ -1304,8 +1323,8 @@ class RedlichKwongMFTP(phase):
         phase.__init__(self,name, elements, species, note, reactions,
                        initial_state,options)
         self.thermo_model = 'Redlich-Kwong'
-        self.kinetics = kinetics
-        self.transport = None if transport == 'None' else transport
+        self.kinetics = None if kinetics == "None" else kinetics
+        self.transport = None if transport == "None" else transport
         self.activity_coefficients = activity_coefficients
 
     def get_yaml(self, out):
@@ -1348,7 +1367,7 @@ class IdealSolidSolution(phase):
         self.standard_concentration = standard_concentration
         if self.standard_concentration is None:
             raise InputError('In phase {}: standard_concentration must be specified.', name)
-        self.transport = None if transport == 'None' else transport
+        self.transport = None if transport == "None" else transport
 
     def get_yaml(self, out):
         super().get_yaml(out)
@@ -1460,12 +1479,15 @@ class ideal_interface(phase):
         phase.__init__(self, name, elements, species, note, reactions,
                        initial_state, options)
         self.thermo_model = 'ideal-surface'
-        self.kinetics = kinetics
-        self.transport = None if transport == 'None' else transport
+        self.kinetics = None if kinetics == "None" else kinetics
+        self.transport = None if transport == "None" else transport
         self.site_density = site_density
+        self.adjacent_phases = phases.split()
 
     def get_yaml(self, out):
         super().get_yaml(out)
+        if self.adjacent_phases:
+            out['adjacent-phases'] = FlowList(self.adjacent_phases)
         out['site-density'] = applyUnits(self.site_density)
         if _motz_wise is not None:
             out['Motz-Wise'] = _motz_wise
@@ -1625,7 +1647,7 @@ def convert(filename=None, output_name=None, text=None):
         # information regarding conversion
         metadata = BlockMap([
             ('generator', 'cti2yaml'),
-            ('cantera-version', '2.6.0a2'),
+            ('cantera-version', '2.6.0a4'),
             ('date', formatdate(localtime=True)),
         ])
         if filename is not None:

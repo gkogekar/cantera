@@ -118,6 +118,7 @@ TEST(IonsFromNeutralConstructor, fromScratch)
     EXPECT_NEAR(mu[1], -2.88157316e+06, 1e-1);
 }
 
+#ifndef CT_NO_PYTHON
 class CtiConversionTest : public testing::Test
 {
 public:
@@ -138,16 +139,20 @@ public:
 };
 
 TEST_F(CtiConversionTest, ExplicitConversion) {
+    suppress_deprecation_warnings();
     p1.reset(newPhase("../data/air-no-reactions.xml"));
     ct2ctml("../data/air-no-reactions.cti");
     p2.reset(newPhase("air-no-reactions.xml", ""));
     compare();
+    make_deprecation_warnings_fatal();
 }
 
 TEST_F(CtiConversionTest, ImplicitConversion) {
+    suppress_deprecation_warnings();
     p1.reset(newPhase("../data/air-no-reactions.xml"));
     p2.reset(newPhase("../data/air-no-reactions.cti"));
     compare();
+    make_deprecation_warnings_fatal();
 }
 
 class ChemkinConversionTest : public testing::Test {
@@ -161,10 +166,12 @@ public:
 };
 
 TEST_F(ChemkinConversionTest, ValidConversion) {
+    suppress_deprecation_warnings();
     copyInputFile("pdep-test.inp");
     ck2cti("pdep-test.inp");
     std::unique_ptr<ThermoPhase> p(newPhase("pdep-test.cti"));
     ASSERT_GT(p->temperature(), 0.0);
+    make_deprecation_warnings_fatal();
 }
 
 TEST_F(ChemkinConversionTest, MissingInputFile) {
@@ -177,6 +184,7 @@ TEST_F(ChemkinConversionTest, FailedConversion) {
     ASSERT_THROW(ck2cti("h2o2_missingThermo.inp"),
                  CanteraError);
 }
+#endif
 
 class ConstructFromScratch : public testing::Test
 {

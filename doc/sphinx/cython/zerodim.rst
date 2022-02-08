@@ -56,6 +56,22 @@ FlowReactor
 ^^^^^^^^^^^
 .. autoclass:: FlowReactor(contents=None, *, name=None, energy='on')
 
+ExtensibleReactor
+^^^^^^^^^^^^^^^^^
+.. autoclass:: ExtensibleReactor
+
+ExtensibleIdealGasReactor
+^^^^^^^^^^^^^^^^^^^^^^^^^
+.. autoclass:: ExtensibleIdealGasReactor(contents=None, *, name=None, energy='on')
+
+ExtensibleConstPressureReactor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. autoclass:: ExtensibleConstPressureReactor(contents=None, *, name=None, energy='on')
+
+ExtensibleIdealGasConstPressureReactor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. autoclass:: ExtensibleIdealGasConstPressureReactor(contents=None, *, name=None, energy='on')
+
 Walls
 -----
 

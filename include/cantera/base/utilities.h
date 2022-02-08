@@ -163,8 +163,6 @@ R poly3(D x, R* c)
     return (((c[3]*x + c[2])*x + c[1])*x + c[0]);
 }
 
-//@}
-
 //! Check to see that a number is finite (not NaN, +Inf or -Inf)
 void checkFinite(const double tmp);
 
@@ -187,6 +185,19 @@ const U& getValue(const std::map<T, U>& m, const T& key, const U& default_val) {
     typename std::map<T,U>::const_iterator iter = m.find(key);
     return (iter == m.end()) ? default_val : iter->second;
 }
+
+//! A macro for generating member function detectors, which can then be used in
+//! combination with `std::enable_if` to allow selection of a particular template
+//! specialization based on the presence of that member function. See MultiBulkRate for
+//! examples of use.
+#define CT_DEFINE_HAS_MEMBER(detector_name, func_name)                   \
+    template <typename T>                                                \
+    struct detector_name {                                               \
+        typedef char (& yes)[1], (& no)[2];                              \
+        template <typename C> static yes check(decltype(&C::func_name)); \
+        template <typename> static no check(...);                        \
+        static bool const value = sizeof(check<T>(0)) == sizeof(yes);    \
+    };
 
 }
 

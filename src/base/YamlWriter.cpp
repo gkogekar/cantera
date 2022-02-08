@@ -11,6 +11,7 @@
 #include "cantera/kinetics/Reaction.h"
 #include "cantera/transport/TransportBase.h"
 
+#include <set>
 #include <fstream>
 #include <chrono>
 
@@ -22,14 +23,30 @@ YamlWriter::YamlWriter()
 {
 }
 
-void YamlWriter::addPhase(shared_ptr<Solution> soln) {
+void YamlWriter::setHeader(const AnyMap& header) {
+    m_header = header;
+}
+
+void YamlWriter::addPhase(shared_ptr<Solution> soln, bool includeAdjacent) {
     for (auto& phase : m_phases) {
         if (phase->name() == soln->name()) {
-            throw CanteraError("YamlWriter::addPhase",
-                "Duplicate phase name '{}'", soln->name());
+            if (phase.get() == soln.get()) {
+                // This phase has already been added, so nothing needs to be done. This
+                // is expected in cases such as bulk phases adjacent to multiple
+                // surface phases.
+                return;
+            } else {
+                throw CanteraError("YamlWriter::addPhase",
+                    "Duplicate phase name '{}'", soln->name());
+            }
         }
     }
     m_phases.push_back(soln);
+    if (includeAdjacent) {
+        for (size_t i = 0; i < soln->nAdjacent(); i++) {
+            addPhase(soln->adjacent(i));
+        }
+    }
 }
 
 void YamlWriter::addPhase(shared_ptr<ThermoPhase> thermo,
@@ -45,16 +62,45 @@ void YamlWriter::addPhase(shared_ptr<ThermoPhase> thermo,
 std::string YamlWriter::toYamlString() const
 {
     AnyMap output;
+    bool hasDescription = m_header.hasKey("description");
+    if (hasDescription) {
+        output["description"] = m_header["description"];
+    }
     output["generator"] = "YamlWriter";
     output["cantera-version"] = CANTERA_VERSION;
+    output["git-commit"] = gitCommit();
     time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     output["date"] = trimCopy(std::ctime(&now));
+    if (hasDescription) {
+        output["description"].setLoc(-6, 0);
+    }
+    output["generator"].setLoc(-5, 0);
+    output["cantera-version"].setLoc(-4, 0);
+    output["git-commit"].setLoc(-3, 0);
+    output["date"].setLoc(-2, 0);
+
+    // Add remaining header information, ignoring obsolete information
+    std::set<std::string> exclude = {
+        "description", "generator", "cantera-version", "git-commit", "date"};
+    for (const auto& item : m_header) {
+        std::string key = item.first;
+        if (!exclude.count(key)) {
+            output[key] = item.second;
+        }
+    }
 
     // Build phase definitions
     std::vector<AnyMap> phaseDefs(m_phases.size());
     size_t nspecies_total = 0;
     for (size_t i = 0; i < m_phases.size(); i++) {
         phaseDefs[i] = m_phases[i]->parameters(!m_skip_user_defined);
+        if (m_phases[i]->nAdjacent()) {
+            std::vector<std::string> adj_names;
+            for (size_t j = 0; j < m_phases[i]->nAdjacent(); j++) {
+                adj_names.push_back(m_phases[i]->adjacent(j)->name());
+            }
+            phaseDefs[i]["adjacent-phases"] = adj_names;
+        }
         nspecies_total += m_phases[i]->thermo()->nSpecies();
     }
     output["phases"] = phaseDefs;
@@ -158,6 +204,11 @@ void YamlWriter::setUnits(const std::map<std::string, std::string>& units)
 {
     m_output_units = UnitSystem();
     m_output_units.setDefaults(units);
+}
+
+void YamlWriter::setUnitSystem(const UnitSystem& units)
+{
+    m_output_units = units;
 }
 
 }

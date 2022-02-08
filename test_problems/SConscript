@@ -200,10 +200,11 @@ CompileAndTest('CpJump', 'CpJump', 'CpJump', 'output_blessed.txt')
 
 diamond = CompileAndTest('diamondSurf-yaml', 'diamondSurf', 'diamondSurf',
     'runDiamond_blessed.out', options='diamond.yaml')
-Test('diamondSurf-cti', 'diamondSurf', diamond.program, 'runDiamond_blessed.out',
-     options='diamond.cti')  # @TODO: remove after Cantera 2.6
+if env["python_package"] != "none":
+    Test('diamondSurf-cti', 'diamondSurf', diamond.program, 'runDiamond_blessed.out',
+        options='diamond.cti')  # @todo: remove after Cantera 2.6
 Test('diamondSurf-xml', 'diamondSurf', diamond.program, 'runDiamond_blessed.out',
-     options='diamond.xml')  # @TODO: remove after Cantera 2.6
+     options='diamond.xml')  # @todo: remove after Cantera 2.6
 
 CompileAndTest('dustyGasTransport', slow=True)
 CompileAndTest('mixGasTransport')
@@ -252,7 +253,7 @@ Test('cxx-flamespeed', 'cxx_samples', '#build/samples/cxx/flamespeed/flamespeed'
      options='0.9 0 0')
 Test('cxx-kinetics1', 'cxx_samples', '#build/samples/cxx/kinetics1/kinetics1', None,
      comparisons=[('kin1_blessed.csv', 'kin1.csv')],
-     artifacts=['kin1.dat'], slow=True)
+     artifacts=['kin1.dat'], slow=True, tolerance=2e-4)
 Test('cxx-gas-transport', 'cxx_samples',
      '#build/samples/cxx/gas_transport/gas_transport', None, slow=True,
      comparisons=[('transport_mix_blessed.csv', 'transport_mix.csv'),

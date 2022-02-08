@@ -53,9 +53,9 @@ import textwrap
 from email.utils import formatdate
 
 try:
-    import ruamel_yaml as yaml
-except ImportError:
     from ruamel import yaml
+except ImportError:
+    import ruamel_yaml as yaml
 
 # yaml.version_info is a tuple with the three parts of the version
 yaml_version = yaml.version_info
@@ -527,9 +527,6 @@ class Chebyshev(KineticsModel):
         self.Pmax = Pmax
         self.coeffs = coeffs
         self.quantity_units = quantity_units
-
-    def reaction_string_suffix(self, species):
-        return ' (+{})'.format(species if species else 'M')
 
     def reduce(self, output):
         output['type'] = 'Chebyshev'
@@ -1426,7 +1423,7 @@ class Parser:
                 else:
                     return None, None
 
-            # @TODO: This loop is a bit of a mess, and could probably be cleaned
+            # @todo: This loop is a bit of a mess, and could probably be cleaned
             # up by refactoring it into a set of methods for processing each
             # input file section.
             line, comment = readline()
@@ -1905,7 +1902,7 @@ class Parser:
             metadata = BlockMap([
                 ('generator', 'ck2yaml'),
                 ('input-files', FlowList(files)),
-                ('cantera-version', '2.6.0a2'),
+                ('cantera-version', '2.6.0a4'),
                 ('date', formatdate(localtime=True)),
             ])
             if desc.strip():
@@ -1952,6 +1949,7 @@ class Parser:
                 phase = BlockMap()
                 phase['name'] = surf.name
                 phase['thermo'] = 'ideal-surface'
+                phase['adjacent-phases'] = FlowList([name])
                 phase['elements'] = FlowList(self.elements)
                 phase['species'] = FlowList(S.label for S in surf.species_list)
                 phase['site-density'] = surf.site_density

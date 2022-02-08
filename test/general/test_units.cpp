@@ -4,6 +4,35 @@
 
 using namespace Cantera;
 
+TEST(Units, from_string) {
+    EXPECT_EQ(Units("").str(), "1");
+    EXPECT_EQ(Units("1.").str(), "1");
+    EXPECT_EQ(Units("kg").str(), "kg");
+    EXPECT_EQ(Units("1.0 kg^0.5").str(), "kg^0.5");
+    EXPECT_EQ(Units("kg / m^3").str(), "kg / m^3");
+    EXPECT_EQ(Units("1 / s").str(), "1 / s");
+    EXPECT_EQ(Units("0.001 m^3").factor(), 0.001);
+    EXPECT_EQ(Units("0.001 m^3").str(), "0.001 m^3");
+}
+
+TEST(Units, from_string_long) {
+    EXPECT_EQ(Units("").str(false), "1.0");
+    EXPECT_EQ(Units("1.").str(false), "1.0");
+    EXPECT_EQ(Units("2").str(false), "2.0");
+    EXPECT_EQ(Units("kg").str(false), "1.0 kg");
+    EXPECT_EQ(Units("1.0 kg^0.5").str(false), "1.0 kg^0.5");
+    EXPECT_EQ(Units("kg / m^3").str(false), "1.0 kg / m^3");
+}
+
+TEST(Units, from_string_fail) {
+    EXPECT_THROW(Units("2", true), CanteraError);
+    EXPECT_THROW(Units("1 cal", true), CanteraError);
+    EXPECT_THROW(Units("1 atm", true), CanteraError);
+    EXPECT_THROW(Units("1 bar", true), CanteraError);
+    EXPECT_THROW(Units("1 kJ", true), CanteraError);
+    EXPECT_THROW(Units("0.001 m^3", true), CanteraError);
+}
+
 TEST(Units, convert_to_base_units) {
     UnitSystem U;
     EXPECT_DOUBLE_EQ(U.convert(1.0, "Pa", "kg/m/s^2"), 1.0);
@@ -278,4 +307,47 @@ TEST(Units, act_energy_from_yaml) {
     EXPECT_DOUBLE_EQ(foo[1].units().convertActivationEnergy(foo[1]["baz"], "K"), 0.2);
     EXPECT_DOUBLE_EQ(foo[0].convert("bar", "J/mol"), 0.0006);
     EXPECT_DOUBLE_EQ(foo[1].convert("baz", "J/mol"), 0.2);
+}
+
+TEST(UnitStack, aggregate) {
+    Units stdUnits = Units("m");
+    UnitStack ustack(stdUnits);
+    EXPECT_EQ(ustack.size(), 1);
+    EXPECT_TRUE(ustack.standardUnits() == stdUnits);
+    EXPECT_DOUBLE_EQ(ustack.standardExponent(), 0.);
+    EXPECT_DOUBLE_EQ(ustack.standardExponent(), 0.);
+    ustack.join(1.);
+    EXPECT_DOUBLE_EQ(ustack.standardExponent(), 1.);
+    ustack.update(stdUnits, 1.); // same effect as join
+    EXPECT_EQ(ustack.size(), 1);
+    EXPECT_DOUBLE_EQ(ustack.standardExponent(), 2.);
+    EXPECT_EQ(ustack.product().str(), "m^2");
+
+    ustack.update(Units("s"), -1);
+    EXPECT_EQ(ustack.size(), 2);
+    EXPECT_EQ(ustack.product().str(), "m^2 / s");
+
+    Units net = ustack.product();
+    EXPECT_DOUBLE_EQ(net.dimension("length"), 2.);
+    EXPECT_DOUBLE_EQ(net.dimension("time"), -1);
+    EXPECT_DOUBLE_EQ(net.dimension("mass"), 0);
+    EXPECT_DOUBLE_EQ(net.dimension("quantity"), 0);
+    EXPECT_DOUBLE_EQ(net.dimension("temperature"), 0);
+    EXPECT_DOUBLE_EQ(net.dimension("current"), 0);
+}
+
+TEST(UnitStack, empty) {
+    UnitStack ustack({});
+    EXPECT_EQ(ustack.size(), 0);
+    EXPECT_TRUE(ustack.standardUnits() == Units(0));
+    EXPECT_TRUE(std::isnan(ustack.standardExponent()));
+}
+
+TEST(UnitStack, from_list) {
+    Units stdUnits = Units("m");
+    UnitStack ustack({std::make_pair(stdUnits, 2), std::make_pair(Units("s"), -1)});
+    EXPECT_EQ(ustack.size(), 2);
+    EXPECT_TRUE(ustack.standardUnits() == stdUnits);
+    EXPECT_DOUBLE_EQ(ustack.standardExponent(), 2.);
+    EXPECT_EQ(ustack.product().str(), "m^2 / s");
 }

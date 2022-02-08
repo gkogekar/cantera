@@ -178,30 +178,9 @@ namespace Cantera
  * K_c \f$, using the second and third part of the above expression as a
  * definition for the concentration equilibrium constant.
  *
- * ## Instantiation of the Class
- *
- * The constructor for this phase is located in the default ThermoFactory for
- * %Cantera. A new LatticePhase object may be created by the following code
- * snippet:
- *
- * @code
- *    XML_Node *xc = get_XML_File("O_lattice_SiO2.xml");
- *    XML_Node * const xs = xc->findNameID("phase", "O_lattice_SiO2");
- *    ThermoPhase *tp = newPhase(*xs);
- *    LatticePhase *o_lattice = dynamic_cast <LatticPhase *>(tp);
- * @endcode
- *
- * or by the following constructor:
- *
- * @code
- *    XML_Node *xc = get_XML_File("O_lattice_SiO2.xml");
- *    XML_Node * const xs = xc->findNameID("phase", "O_lattice_SiO2");
- *    LatticePhase *o_lattice = new LatticePhase(*xs);
- * @endcode
- *
- * The XML file used in this example is listed in the next section
- *
  * ## XML Example
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
  *
  * An example of an XML Element named phase setting up a LatticePhase object
  * named "O_lattice_SiO2" is given below.
@@ -327,16 +306,16 @@ public:
      */
     virtual doublereal cv_mole() const;
 
-    //@}
-    /// @name Mechanical Equation of State Properties
-    /**
+    //! @}
+    //! @name Mechanical Equation of State Properties
+    /*!
      * In this equation of state implementation, the density is a function only
      * of the mole fractions. Therefore, it can't be an independent variable.
      * Instead, the pressure is used as the independent variable. Functions
      * which try to set the thermodynamic state by calling setDensity() may
      * cause an exception to be thrown.
      */
-    //@{
+    //! @{
 
     //! Pressure. Units: Pa.
     /*!
@@ -376,7 +355,7 @@ public:
      */
     doublereal calcDensity();
 
-    //@}
+    //! @}
     /// @name Activities, Standard States, and Activity Concentrations
     /**
      * The activity \f$a_k\f$ of a species in solution is related to the
@@ -385,7 +364,7 @@ public:
      * which depends only on temperature and the pressure. Activity is assumed
      * to be molality-based here.
      */
-    //@{
+    //! @{
 
     virtual Units standardConcentrationUnits() const;
     virtual void getActivityConcentrations(doublereal* c) const;
@@ -403,8 +382,6 @@ public:
      * @param k Optional parameter indicating the species. The default is to
      *         assume this refers to species 0.
      * @returns the standard Concentration in units of m^3/kmol.
-     *
-     * @param k Species index
      */
     virtual doublereal standardConcentration(size_t k=0) const;
     virtual doublereal logStandardConc(size_t k=0) const;
@@ -418,9 +395,9 @@ public:
      */
     virtual void getActivityCoefficients(doublereal* ac) const;
 
-    //@}
+    //! @}
     /// @name  Partial Molar Properties of the Solution
-    //@{
+    //! @{
 
     //! Get the species chemical potentials. Units: J/kmol.
     /*!
@@ -432,10 +409,6 @@ public:
      *            potentials. Length: m_kk. Units: J/kmol
      */
     virtual void getChemPotentials(doublereal* mu) const;
-
-    //@}
-    /// @name  Partial Molar Properties of the Solution
-    //@{
 
     /**
      * Returns an array of partial molar enthalpies for the species in the
@@ -487,9 +460,9 @@ public:
     virtual void getStandardChemPotentials(doublereal* mu) const;
     virtual void getPureGibbs(doublereal* gpure) const;
 
-    //@}
-    /// @name  Properties of the Standard State of the Species in the Solution
-    //@{
+    //! @}
+    //! @name  Properties of the Standard State of the Species in the Solution
+    //! @{
 
     //! Get the nondimensional Enthalpy functions for the species standard
     //! states at their standard states at the current *T* and *P* of the
@@ -576,9 +549,9 @@ public:
      */
     virtual void getStandardVolumes(doublereal* vol) const;
 
-    //@}
+    //! @}
     /// @name Thermodynamic Values for the Species Reference States
-    //@{
+    //! @{
 
     const vector_fp& enthalpy_RT_ref() const;
 
@@ -608,9 +581,9 @@ public:
      */
     const vector_fp& cp_R_ref() const;
 
-    //@}
-    /// @name  Utilities for Initialization of the Object
-    //@{
+    //! @}
+    //! @name  Utilities for Initialization of the Object
+    //! @{
 
     virtual bool addSpecies(shared_ptr<Species> spec);
 
@@ -650,7 +623,7 @@ public:
      *     Cantera 3.0.
      */
     virtual void setParametersFromXML(const XML_Node& eosdata);
-    //@}
+    //! @}
 
 protected:
     virtual void compositionChanged();

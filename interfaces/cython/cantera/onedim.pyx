@@ -444,8 +444,12 @@ cdef class _FlowBase(Domain1D):
     def __init__(self, *args, **kwargs):
         self.domain = <CxxDomain1D*>(self.flow)
         super().__init__(*args, **kwargs)
-        if self.gas.transport_model == 'Transport':
-            self.gas.transport_model = 'Mix'
+        if self.gas.transport_model == "None":
+            warnings.warn(
+                "An appropriate transport model\nshould be set when instantiating the "
+                "Solution ('gas') object.\nImplicit setting of the transport model "
+                "may be deprecated in the future.", FutureWarning)
+            self.gas.transport_model = "Mix"
         self.flow.setKinetics(deref(self.gas.kinetics))
         self.flow.setTransport(deref(self.gas.transport))
         self.P = self.gas.P
@@ -1137,6 +1141,7 @@ cdef class Sim1D:
                 if isinstance(dom, _FlowBase):
                     dom.set_transport(self.gas)
 
+        # Do initial solution steps with default tolerances
         have_user_tolerances = any(dom.have_user_tolerances for dom in self.domains)
         if have_user_tolerances:
             # Save the user-specified tolerances
@@ -1144,6 +1149,14 @@ cdef class Sim1D:
             rtol_ss_final = [dom.steady_reltol() for dom in self.domains]
             atol_ts_final = [dom.transient_abstol() for dom in self.domains]
             rtol_ts_final = [dom.transient_reltol() for dom in self.domains]
+
+        def restore_tolerances():
+            if have_user_tolerances:
+                for i in range(len(self.domains)):
+                    self.domains[i].set_steady_tolerances(abs=atol_ss_final[i],
+                                                        rel=rtol_ss_final[i])
+                    self.domains[i].set_transient_tolerances(abs=atol_ts_final[i],
+                                                            rel=rtol_ts_final[i])
 
         for dom in self.domains:
             dom.set_default_tolerances()
@@ -1203,6 +1216,7 @@ cdef class Sim1D:
                 # restore settings before re-raising exception
                 set_transport(transport)
                 set_soret(True)
+                restore_tolerances()
                 raise e
 
             # If initial solve using energy equation fails, fall back on the
@@ -1221,6 +1235,7 @@ cdef class Sim1D:
                     # restore settings before re-raising exception
                     set_transport(transport)
                     set_soret(True)
+                    restore_tolerances()
                     raise e
 
                 if solved:
@@ -1236,6 +1251,7 @@ cdef class Sim1D:
                         # restore settings before re-raising exception
                         set_transport(transport)
                         set_soret(True)
+                        restore_tolerances()
                         raise e
 
             if solved and not self.extinct() and refine_grid:
@@ -1251,6 +1267,7 @@ cdef class Sim1D:
                     # restore settings before re-raising exception
                     set_transport(transport)
                     set_soret(True)
+                    restore_tolerances()
                     raise e
 
                 if solved and not self.extinct():
@@ -1276,11 +1293,7 @@ cdef class Sim1D:
 
         if have_user_tolerances:
             log('Solving with user-specified tolerances')
-            for i in range(len(self.domains)):
-                self.domains[i].set_steady_tolerances(abs=atol_ss_final[i],
-                                                      rel=rtol_ss_final[i])
-                self.domains[i].set_transient_tolerances(abs=atol_ts_final[i],
-                                                         rel=rtol_ts_final[i])
+            restore_tolerances()
 
         # Final call with expensive options enabled
         if have_user_tolerances or solve_multi or soret_doms:
@@ -1395,10 +1408,13 @@ cdef class Sim1D:
         def __get__(self):
             return self.sim.fixedTemperatureLocation()
 
-    def save(self, filename='soln.xml', name='solution', description='none',
+    def save(self, filename='soln.yaml', name='solution', description='none',
              loglevel=1):
         """
-        Save the solution in XML format.
+        Save the solution in YAML or XML format.
+
+        .. deprecated:: 2.6
+           XML-based output is deprecated and will be removed in Cantera 3.0.
 
         :param filename:
             solution file
@@ -1407,15 +1423,18 @@ cdef class Sim1D:
         :param description:
             custom description text
 
-        >>> s.save(filename='save.xml', name='energy_off',
+        >>> s.save(filename='save.yaml', name='energy_off',
         ...        description='solution with energy eqn. disabled')
 
         """
         self.sim.save(stringify(str(filename)), stringify(name),
                       stringify(description), loglevel)
 
-    def restore(self, filename='soln.xml', name='solution', loglevel=2):
+    def restore(self, filename='soln.yaml', name='solution', loglevel=2):
         """Set the solution vector to a previously-saved solution.
+
+        .. deprecated:: 2.6
+           XML-based input is deprecated and will be removed in Cantera 3.0.
 
         :param filename:
             solution file
@@ -1425,7 +1444,7 @@ cdef class Sim1D:
             Amount of logging information to display while restoring,
             from 0 (disabled) to 2 (most verbose).
 
-        >>> s.restore(filename='save.xml', name='energy_off')
+        >>> s.restore(filename='save.yaml', name='energy_off')
         """
         self.sim.restore(stringify(str(filename)), stringify(name), loglevel)
         self._initialized = True

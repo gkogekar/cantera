@@ -58,6 +58,8 @@ protected:
     shared_ptr<AnyMap> m_metadata;
 
     friend class InputFileError;
+    friend void warn_deprecated(const std::string& source, const AnyBase& node,
+                                const std::string& message);
 };
 
 class AnyMap;
@@ -266,8 +268,6 @@ public:
     void setFlowStyle(bool flow=true);
 
 private:
-    std::string demangle(const std::type_info& type) const;
-
     template<class T>
     void checkSize(const std::vector<T>& v, size_t nMin, size_t nMax) const;
 
@@ -276,10 +276,6 @@ private:
 
     //! The held value
     std::unique_ptr<boost::any> m_value;
-
-    //! Human-readable names for some common types, for use when
-    //! `boost::demangle` is not available.
-    static std::map<std::string, std::string> s_typenames;
 
     typedef bool (*Comparer)(const boost::any&, const boost::any&);
 
@@ -454,6 +450,9 @@ public:
     //! Set a metadata value that applies to this AnyMap and its children.
     //! Mainly for internal use in reading or writing from files.
     void setMetadata(const std::string& key, const AnyValue& value);
+
+    //! Copy metadata including input line/column from an existing AnyMap
+    void copyMetadata(const AnyMap& other);
 
     //! Propagate metadata to any child elements
     void propagateMetadata(shared_ptr<AnyMap>& file);
@@ -659,6 +658,9 @@ public:
     static bool addOrderingRules(const std::string& objectType,
                                  const std::vector<std::vector<std::string>>& specs);
 
+    //! Remove the specified file from the input cache if it is present
+    static void clearCachedFile(const std::string& filename);
+
 private:
     //! The stored data
     std::unordered_map<std::string, AnyValue> m_data;
@@ -739,6 +741,10 @@ protected:
         int line1, int column1, const shared_ptr<AnyMap>& metadata1,
         int line2, int column2, const shared_ptr<AnyMap>& metadata2);
 };
+
+//! A deprecation warning for syntax in an input file
+void warn_deprecated(const std::string& source, const AnyBase& node,
+                     const std::string& message);
 
 }
 

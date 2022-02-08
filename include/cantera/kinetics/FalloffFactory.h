@@ -2,7 +2,10 @@
  *  @file FalloffFactory.h
  *  Parameterizations for reaction falloff functions. Used by classes
  *  that implement gas-phase kinetics (GasKinetics, GRI_30_Kinetics)
- *  (see \ref falloffGroup and class \link Cantera::Falloff Falloff\endlink).
+ *  (see \ref falloffGroup and class \link Cantera::FalloffRate FalloffRate\endlink).
+ *
+ *  @deprecated  Deprecated in Cantera 2.6 and removed thereafter. Replaced by
+ *      FalloffRate objects managed by MultiRate evaluators.
  */
 
 // This file is part of Cantera. See License.txt in the top-level directory or
@@ -26,6 +29,9 @@ namespace Cantera
  * @endcode
  *
  * @ingroup falloffGroup
+ *
+ * @deprecated  Deprecated in Cantera 2.6 and removed thereafter. Replaced by
+ *      FalloffRate objects managed by MultiRate evaluators.
  */
 class FalloffFactory : public Factory<Falloff>
 {

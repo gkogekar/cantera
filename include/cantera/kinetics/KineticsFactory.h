@@ -15,13 +15,17 @@
 namespace Cantera
 {
 
+//! @deprecated Unused. To be removed after Cantera 2.6.
 class UnknownKineticsModel : public CanteraError
 {
 public:
     UnknownKineticsModel(const std::string& proc, const std::string& kineticsModel) :
         CanteraError(proc, "Specified Kinetics model "
                      + kineticsModel +
-                     " does not match any known type.") {}
+                     " does not match any known type.") {
+        warn_deprecated("class UnknownKineticsModel",
+            "Unused. To be removed after Cantera 2.6.");
+    }
 };
 
 /**
@@ -96,6 +100,15 @@ inline Kinetics* newKineticsMgr(XML_Node& phase, std::vector<ThermoPhase*> th)
 inline Kinetics* newKineticsMgr(const std::string& model)
 {
     return KineticsFactory::factory()->newKinetics(model);
+}
+
+/**
+ *  Create a new Kinetics instance.
+ */
+inline shared_ptr<Kinetics> newKinetics(const std::string& model)
+{
+    shared_ptr<Kinetics> kin(KineticsFactory::factory()->newKinetics(model));
+    return kin;
 }
 
 /*!

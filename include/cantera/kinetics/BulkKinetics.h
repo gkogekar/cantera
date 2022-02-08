@@ -25,6 +25,8 @@ class BulkKinetics : public Kinetics
 public:
     BulkKinetics(ThermoPhase* thermo = 0);
 
+    virtual void resizeReactions();
+
     virtual bool isReversible(size_t i);
 
     virtual void getDeltaGibbs(doublereal* deltaG);
@@ -35,10 +37,10 @@ public:
     virtual void getDeltaSSEnthalpy(doublereal* deltaH);
     virtual void getDeltaSSEntropy(doublereal* deltaS);
 
-    virtual void getRevRateConstants(doublereal* krev,
+    virtual void getRevRateConstants(double* krev,
                                      bool doIrreversible = false);
 
-    virtual bool addReaction(shared_ptr<Reaction> r);
+    virtual bool addReaction(shared_ptr<Reaction> r, bool resize=true);
     virtual void modifyReaction(size_t i, shared_ptr<Reaction> rNew);
 
     virtual void resizeSpecies();
@@ -56,7 +58,7 @@ protected:
     std::vector<unique_ptr<MultiRateBase>> m_bulk_rates;
     std::map<std::string, size_t> m_bulk_types; //!< Mapping of rate handlers
 
-    Rate1<Arrhenius> m_rates;
+    Rate1<Arrhenius2> m_rates; //!< @deprecated (legacy only)
     std::vector<size_t> m_revindex; //!< Indices of reversible reactions
     std::vector<size_t> m_irrev; //!< Indices of irreversible reactions
 
@@ -65,9 +67,7 @@ protected:
     //! valued stoichiometries.
     vector_fp m_dn;
 
-    ThirdBodyCalc m_multi_concm; //!< used with MultiRate evaluator
-    vector_fp concm_multi_values; //!< concentrations of third-body collision partners
-    std::vector<size_t> m_multi_indices; //!< reaction indices
+    ThirdBodyCalc3 m_multi_concm; //!< used with MultiRate evaluator
 
     //! Third body concentrations
     vector_fp m_concm;

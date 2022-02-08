@@ -27,9 +27,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 try:
-    import ruamel_yaml as yaml  # type: ignore
-except ImportError:
     from ruamel import yaml
+except ImportError:
+    import ruamel_yaml as yaml  # type: ignore
 
 # yaml.version_info is a tuple with the three parts of the version
 yaml_version = yaml.version_info
@@ -457,6 +457,12 @@ class Phase:
             )
         self.attribs["thermo"] = self.thermo_model_mapping[phase_thermo_model]
 
+        phases_text = phase.findtext("phaseArray")
+        if phases_text is not None:
+            adjacent_phases = phases_text.replace("\n", " ").strip().split()
+            if adjacent_phases:
+                self.attribs["adjacent-phases"] = FlowList(adjacent_phases)
+
         if phase_thermo_model == "PureFluid":
             pure_fluid_type = phase_thermo.get("fluid_type")
             if pure_fluid_type is None:
@@ -636,7 +642,12 @@ class Phase:
 
         std_conc_node = phase.find("standardConc")
         if std_conc_node is not None:
-            self.attribs["standard-concentration-basis"] = std_conc_node.get("model")
+            model = std_conc_node.get("model")
+            if model == "solvent_volume":
+                model = "solvent-molar-volume"
+            elif model == "molar_volume":
+                model = "species-molar-volume"
+            self.attribs["standard-concentration-basis"] = model
 
         self.check_elements(species, species_data)
 
@@ -1598,7 +1609,7 @@ class SpeciesThermo:
         if tmin is not None and tmin != '100.0':
             thermo_attribs['T-min'] = float(tmin)
         tmax = const_cp_node.get('Tmax')
-        if tmax is not None and tmin != '5000.0':
+        if tmax is not None and tmax != '5000.0':
             thermo_attribs['T-max'] = float(tmax)
 
         return thermo_attribs
@@ -2043,10 +2054,11 @@ class Reaction:
         elif reaction_type in ["plog", "pdep_arrhenius"]:
             reaction_type = "plog"
         elif reaction_type == "chebyshev":
-            # There's only one way to spell Chebyshev, so no need to change anything
-            # However, we need to catch this case so it doesn't raise the TypeError
-            # in the else clause
-            pass
+            # Remove deprecated '(+M)' third body notation
+            self.attribs["equation"] = re.sub(r" *\( *\+ *M *\)", "",
+                                              self.attribs["equation"])
+            # There's only one way to spell Chebyshev, so no need to change the
+            # reaction_type.
         elif reaction_type in [
             "interface",
             "edge",
@@ -2629,7 +2641,7 @@ def convert(
     metadata = BlockMap(
         {
             "generator": "ctml2yaml",
-            "cantera-version": "2.6.0a2",
+            "cantera-version": "2.6.0a4",
             "date": formatdate(localtime=True),
         }
     )

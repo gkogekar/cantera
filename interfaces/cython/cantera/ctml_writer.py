@@ -19,7 +19,7 @@
 # .. deprecated:: 2.5
 #
 #    The CTI and XML input file formats are deprecated and will be removed in
-#    Cantera 3.0. Use `cti2yaml.py` to convert CTI input files to the YAML
+#    Cantera 3.0. Use 'cti2yaml.py' to convert CTI input files to the YAML
 #    format.
 #
 
@@ -1214,8 +1214,7 @@ class reaction(object):
         self.ldim = 0
 
         rxnph = []
-        for s in self._r:
-            ns = self._rxnorder[s]
+        for s, ns in self._rxnorder.items():
             nm = -999
             nl = -999
 
@@ -1234,8 +1233,14 @@ class reaction(object):
                                 mindim = ph._dim
                         break
                 if nm == -999:
-                    raise CTI_Error("species '{0}' not found while parsing "
-                        "reaction: '{1}'.".format(s, self._e))
+                    if s in self._r:
+                        raise CTI_Error("species '{0}' not found while parsing "
+                            "reaction: '{1}'.".format(s, self._e))
+                    else:
+                        # This reaction will either be skipped or raise an error later
+                        # due to an order being specified for an undeclared species
+                        nm = 0
+                        nl = 0
             else:
                 # If no phases are defined, assume all reactants are in bulk
                 # phases
@@ -2756,6 +2761,11 @@ def convert(filename=None, outName=None, text=None):
 def main():
     if len(sys.argv) not in (2,3):
         raise ValueError('Incorrect number of command line arguments.')
+    print("WARNING: The CTI and XML input file formats are deprecated and will be\n"
+          "removed in Cantera 3.0. Use 'cti2yaml.py' to convert CTI input files to\n"
+          "the YAML format. See https://cantera.org/tutorials/legacy2yaml.html for\n"
+          "more information.")
+
     convert(*sys.argv[1:])
 
 if __name__ == "__main__":

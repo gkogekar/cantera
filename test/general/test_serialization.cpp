@@ -10,6 +10,66 @@
 #include "cantera/transport/TransportData.h"
 
 using namespace Cantera;
+using namespace YAML;
+
+TEST(YamlWriter, formatDouble)
+{
+    AnyMap m;
+    int count;
+    float delta;
+
+    // check least significant digit
+    // default precision is 15 (see AnyMap.cpp::getPrecicion)
+    delta = 1.e-15;
+    count = 0;
+    for (int i = -9; i < 10; i += 2) {
+        m["a"] = 4. + i * delta;
+        if (i < -5 || i > 4) {
+            // round away from 4.
+            EXPECT_NE(m.toYamlString(), "a: 4.0\n");
+        } else {
+            // round towards 4.
+            EXPECT_EQ(m.toYamlString(), "a: 4.0\n");
+            count++;
+        }
+    }
+    EXPECT_EQ(count, 5); // only checking even multiples of delta
+
+    // check edge cases
+    m["a"] = -1061.793215682400;
+    EXPECT_EQ(m.toYamlString(), "a: -1061.7932156824\n");
+
+    m["a"] = 7.820059054328200e-111;
+    EXPECT_EQ(m.toYamlString(), "a: 7.8200590543282e-111\n");
+}
+
+TEST(YamlWriter, formatDoubleExp)
+{
+    AnyMap m;
+    int count;
+    float delta;
+
+    // check least significant digit
+    // default precision is 15 (see AnyMap.cpp::getPrecicion)
+    delta = 1.e-5;
+    count = 0;
+    for (int i = -9; i < 10; i += 2) {
+        m["a"] = 4.e10 + i * delta;
+        if (i < -5 || i > 4) {
+            // round away from 4.
+            EXPECT_NE(m.toYamlString(), "a: 4.0e+10\n");
+        } else {
+            // round towards 4.
+            EXPECT_EQ(m.toYamlString(), "a: 4.0e+10\n");
+            count++;
+        }
+    }
+    EXPECT_EQ(count, 5); // only checking even multiples of delta
+
+    // check edge cases
+    m["a"] = 1.629771953878800e+13;
+    EXPECT_EQ(m.toYamlString(), "a: 1.6297719538788e+13\n");
+}
 
 TEST(YamlWriter, thermoDef)
 {
@@ -56,6 +116,26 @@ TEST(YamlWriter, userDefinedFields)
     EXPECT_FALSE(spec2->input.hasKey("extra-field"));
     EXPECT_FALSE(spec2->thermo->input().hasKey("bonus-field"));
     EXPECT_FALSE(spec2->transport->input.hasKey("bogus-field"));
+}
+
+TEST(YamlWriter, literalStrings)
+{
+    auto original = newSolution("ideal-gas.yaml", "simple");
+    YamlWriter writer;
+    writer.addPhase(original);
+    writer.toYamlFile("generated-literal.yaml");
+    auto duplicate = newSolution("generated-literal.yaml");
+    auto thermo1 = original->thermo();
+    auto thermo2 = duplicate->thermo();
+
+    EXPECT_EQ(thermo1->input()["literal-string"].asString(),
+              thermo2->input()["literal-string"].asString());
+
+    auto spec1 = thermo1->species("O2");
+    auto spec2 = thermo2->species("O2");
+
+    EXPECT_EQ(spec1->input["another-literal-string"].asString(),
+              spec2->input["another-literal-string"].asString());
 }
 
 TEST(YamlWriter, sharedSpecies)
@@ -114,11 +194,14 @@ TEST(YamlWriter, reaction_units_from_Yaml)
     YamlWriter writer;
     writer.addPhase(original);
     writer.setPrecision(14);
-    writer.setUnits({
+    auto units = UnitSystem();
+    std::map<std::string, std::string> defaults{
         {"activation-energy", "K"},
         {"quantity", "mol"},
         {"length", "cm"}
-    });
+    };
+    units.setDefaults(defaults);
+    writer.setUnitSystem(units);
     writer.toYamlFile("generated-h2o2-outunits.yaml");
     auto duplicate = newSolution("generated-h2o2-outunits.yaml", "", "None");
 
@@ -136,7 +219,9 @@ TEST(YamlWriter, reaction_units_from_Yaml)
 
 TEST(YamlWriter, reaction_units_from_Xml)
 {
+    suppress_deprecation_warnings();
     auto original = newSolution("h2o2.xml", "", "None");
+    make_deprecation_warnings_fatal();
     YamlWriter writer;
     writer.addPhase(original);
     writer.setPrecision(14);
@@ -270,45 +355,23 @@ TEST(YamlWriter, Interface)
 
 TEST(YamlWriter, sofc)
 {
-    shared_ptr<ThermoPhase> gas1(newPhase("sofc.yaml", "gas"));
-    shared_ptr<ThermoPhase> metal1(newPhase("sofc.yaml", "metal"));
-    shared_ptr<ThermoPhase> ox_bulk1(newPhase("sofc.yaml", "oxide_bulk"));
-    shared_ptr<ThermoPhase> metal_surf1(newPhase("sofc.yaml", "metal_surface"));
-    shared_ptr<ThermoPhase> oxide_surf1(newPhase("sofc.yaml", "oxide_surface"));
-    shared_ptr<ThermoPhase> tpb1(newPhase("sofc.yaml", "tpb"));
-
-    std::vector<ThermoPhase*> tpb_phases1{tpb1.get(), metal_surf1.get(), oxide_surf1.get(), metal1.get()};
-    std::vector<ThermoPhase*> ox_phases1{oxide_surf1.get(), ox_bulk1.get(), gas1.get()};
-
-    shared_ptr<Kinetics> tpb_kin1 = newKinetics(tpb_phases1, "sofc.yaml", "tpb");
-    shared_ptr<Kinetics> ox_kin1 = newKinetics(ox_phases1, "sofc.yaml", "oxide_surface");
+    auto tpb1 = newSolution("sofc.yaml", "tpb");
+    auto tpb_kin1 = tpb1->kinetics();
+    auto ox_kin1 = tpb1->adjacent("oxide_surface")->kinetics();
 
     YamlWriter writer;
-    writer.addPhase(tpb1, tpb_kin1);
-    writer.addPhase(metal_surf1);
-    writer.addPhase(oxide_surf1, ox_kin1);
-    writer.addPhase(metal1);
-    writer.addPhase(gas1);
-    writer.addPhase(ox_bulk1);
+    writer.addPhase(tpb1);
     writer.setUnits({
         {"length", "cm"},
         {"pressure", "atm"},
         {"activation-energy", "eV"}
     });
+    writer.skipUserDefined();
     writer.toYamlFile("generated-sofc.yaml");
 
-    shared_ptr<ThermoPhase> gas2(newPhase("generated-sofc.yaml", "gas"));
-    shared_ptr<ThermoPhase> metal2(newPhase("generated-sofc.yaml", "metal"));
-    shared_ptr<ThermoPhase> ox_bulk2(newPhase("generated-sofc.yaml", "oxide_bulk"));
-    shared_ptr<ThermoPhase> metal_surf2(newPhase("generated-sofc.yaml", "metal_surface"));
-    shared_ptr<ThermoPhase> oxide_surf2(newPhase("generated-sofc.yaml", "oxide_surface"));
-    shared_ptr<ThermoPhase> tpb2(newPhase("generated-sofc.yaml", "tpb"));
-
-    std::vector<ThermoPhase*> tpb_phases2{tpb2.get(), metal_surf2.get(), oxide_surf2.get(), metal2.get()};
-    std::vector<ThermoPhase*> ox_phases2{oxide_surf2.get(), ox_bulk2.get(), gas2.get()};
-
-    shared_ptr<Kinetics> tpb_kin2 = newKinetics(tpb_phases2, "generated-sofc.yaml", "tpb");
-    shared_ptr<Kinetics> ox_kin2 = newKinetics(ox_phases2, "generated-sofc.yaml", "oxide_surface");
+    auto tpb2 = newSolution("generated-sofc.yaml", "tpb");
+    auto tpb_kin2 = tpb2->kinetics();
+    auto ox_kin2 = tpb2->adjacent("oxide_surface")->kinetics();
 
     ASSERT_EQ(tpb_kin1->nReactions(), tpb_kin2->nReactions());
     vector_fp kf1(tpb_kin1->nReactions()), kf2(tpb_kin1->nReactions());
@@ -342,4 +405,25 @@ TEST(YamlWriter, sofc)
     for (size_t i = 0; i < ox_kin1->nTotalSpecies(); i++) {
         EXPECT_NEAR(wdot1[i], wdot2[i], 1e-13 * fabs(wdot1[i])) << "for ox species i = " << i;
     }
+}
+
+TEST(YamlWriter, customHeader)
+{
+    auto original = newSolution("h2o2.yaml", "", "None");
+    AnyMap header;
+    header["description"] = "Copy of H2O2 mechanism";
+    header["spam"] = "eggs";
+
+    YamlWriter writer;
+    writer.setHeader(header);
+    writer.addPhase(original);
+    writer.toYamlFile("generated-custom-header.yaml");
+
+    auto soln = newSolution("generated-custom-header.yaml", "", "None");
+
+    ASSERT_EQ(soln->header()["cantera-version"].asString(), CANTERA_VERSION);
+    ASSERT_EQ(soln->header()["generator"].asString(), "YamlWriter");
+    ASSERT_EQ(soln->header()["description"].asString(),
+              "Copy of H2O2 mechanism");
+    ASSERT_EQ(soln->header()["spam"].asString(), "eggs");
 }

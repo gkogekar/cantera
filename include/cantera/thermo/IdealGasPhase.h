@@ -239,27 +239,9 @@ namespace Cantera
  *
  * \f$k^{-1} \f$ has units of s-1.
  *
- * ## Instantiation of the Class
- *
- * The constructor for this phase is located in the default ThermoFactory for
- * %Cantera. A new IdealGasPhase may be created by the following code snippet:
- *
- * @code
- *    XML_Node *xc = get_XML_File("silane.xml");
- *    XML_Node * const xs = xc->findNameID("phase", "silane");
- *    ThermoPhase *silane_tp = newPhase(*xs);
- *    IdealGasPhase *silaneGas = dynamic_cast <IdealGasPhase *>(silane_tp);
- * @endcode
- *
- * or by the following constructor:
- *
- * @code
- *    XML_Node *xc = get_XML_File("silane.xml");
- *    XML_Node * const xs = xc->findNameID("phase", "silane");
- *    IdealGasPhase *silaneGas = new IdealGasPhase(*xs);
- * @endcode
- *
  * ## XML Example
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
  *
  *   An example of an XML Element named phase setting up a IdealGasPhase
  *   object named silane is given below.
@@ -313,6 +295,10 @@ public:
 
     virtual std::string type() const {
         return "IdealGas";
+    }
+
+    virtual bool isIdeal() const {
+        return true;
     }
 
     //! String indicating the mechanical phase of the matter in this Phase.
@@ -446,7 +432,7 @@ public:
         return 1.0 / temperature();
     }
 
-    //@}
+    //! @}
 
     /**
      * @name Chemical Potentials and Activities
@@ -516,9 +502,9 @@ public:
      */
     virtual void getActivityCoefficients(doublereal* ac) const;
 
-    //@}
+    //! @}
     /// @name Partial Molar Properties of the Solution
-    //@{
+    //! @{
 
     virtual void getChemPotentials(doublereal* mu) const;
     virtual void getPartialMolarEnthalpies(doublereal* hbar) const;
@@ -527,9 +513,9 @@ public:
     virtual void getPartialMolarCp(doublereal* cpbar) const;
     virtual void getPartialMolarVolumes(doublereal* vbar) const;
 
-    //@}
+    //! @}
     /// @name  Properties of the Standard State of the Species in the Solution
-    //@{
+    //! @{
 
     virtual void getStandardChemPotentials(doublereal* mu) const;
     virtual void getEnthalpy_RT(doublereal* hrt) const;
@@ -540,9 +526,9 @@ public:
     virtual void getCp_R(doublereal* cpr) const;
     virtual void getStandardVolumes(doublereal* vol) const;
 
-    //@}
+    //! @}
     /// @name Thermodynamic Values for the Species Reference States
-    //@{
+    //! @{
 
     virtual void getEnthalpy_RT_ref(doublereal* hrt) const;
     virtual void getGibbs_RT_ref(doublereal* grt) const;
@@ -552,9 +538,9 @@ public:
     virtual void getCp_R_ref(doublereal* cprt) const;
     virtual void getStandardVolumes_ref(doublereal* vol) const;
 
-    //@}
+    //! @}
     /// @name NonVirtual Internal methods to Return References to Reference State Thermo
-    //@{
+    //! @{
 
     //! Returns a reference to the dimensionless reference state enthalpy vector.
     /*!
@@ -596,7 +582,7 @@ public:
         return m_cp0_R;
     }
 
-    //@}
+    //! @}
 
     virtual bool addSpecies(shared_ptr<Species> spec);
     virtual void setToEquilState(const doublereal* mu_RT);

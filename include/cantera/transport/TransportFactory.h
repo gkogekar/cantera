@@ -92,9 +92,28 @@ private:
     std::map<std::string, bool> m_CK_mode;
 };
 
-//! @copydoc TransportFactory::newTransport(const std::string&, ThermoPhase*, int, int)
-Transport* newTransportMgr(const std::string& transportModel = "",
-                           ThermoPhase* thermo = 0, int loglevel = 0);
+//! @copydoc TransportFactory::newTransport(const std::string&, ThermoPhase*, int)
+Transport* newTransportMgr(const std::string& model="", ThermoPhase* thermo=0,
+                           int log_level=0);
+
+//!  Create a new Transport instance.
+/*!
+ *  @param thermo   the ThermoPhase object associated with the phase
+ *  @param model    name of transport model; if "default", the default
+ *                  transport model for the ThermoPhase object is created
+ *  @returns a Transport object for the phase
+ * @ingroup tranprops
+ */
+inline shared_ptr<Transport> newTransport(ThermoPhase* thermo,
+                                          const std::string& model = "default") {
+    Transport* tr;
+    if (model == "default") {
+        tr = TransportFactory::factory()->newTransport(thermo, 0);
+    } else {
+        tr = TransportFactory::factory()->newTransport(model, thermo, 0);
+    }
+    return shared_ptr<Transport> (tr);
+}
 
 //!  Create a new transport manager instance.
 /*!

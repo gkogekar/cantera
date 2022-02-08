@@ -320,11 +320,8 @@ VCS_SOLVE::VCS_SOLVE(MultiPhase* mphase, int printLvl) :
                 ts_ptr->SSStar_Vol_Model = VCS_SSVOL_IDEALGAS;
                 ts_ptr->SSStar_Vol0 = 82.05 * 273.15 / 1.0;
             } else {
-                vector_fp phaseTermCoeff(nSpPhase, 0.0);
-                int nCoeff;
-                tPhase->getParameters(nCoeff, &phaseTermCoeff[0]);
                 ts_ptr->SSStar_Vol_Model = VCS_SSVOL_CONSTANT;
-                ts_ptr->SSStar_Vol0 = phaseTermCoeff[k];
+                ts_ptr->SSStar_Vol0 = 0.0;
             }
             kT++;
         }
@@ -1398,7 +1395,7 @@ double VCS_SOLVE::vcs_phaseStabilityTest(const size_t iph)
             Vphase->setMoleFractionsState(0.0, &X_est[0], VCS_STATECALC_PHASESTABILITY);
 
             // Save fracDelta for later use to initialize the problem better
-            // @TODO  creationGlobalRxnNumbers needs to be calculated here and stored.
+            // @todo  creationGlobalRxnNumbers needs to be calculated here and stored.
             Vphase->setCreationMoleNumbers(&fracDelta_new[0], creationGlobalRxnNumbers);
         }
     } else {

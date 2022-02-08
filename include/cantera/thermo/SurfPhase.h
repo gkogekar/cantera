@@ -89,27 +89,9 @@ namespace Cantera
  *            C^0_k = \frac{n_0}{s_k}
  *        \f]
  *
- * ## Instantiation of the Class
- *
- * The constructor for this phase is located in the default ThermoFactory
- * for %Cantera. A new SurfPhase may be created by the following code snippet:
- *
- * @code
- *    XML_Node *xc = get_XML_File("diamond.xml");
- *    XML_Node * const xs = xc->findNameID("phase", "diamond_100");
- *    ThermoPhase *diamond100TP_tp = newPhase(*xs);
- *    SurfPhase *diamond100TP = dynamic_cast <SurfPhase *>(diamond100TP_tp);
- * @endcode
- *
- * or by the following constructor:
- *
- * @code
- *    XML_Node *xc = get_XML_File("diamond.xml");
- *    XML_Node * const xs = xc->findNameID("phase", "diamond_100");
- *    SurfPhase *diamond100TP = new SurfPhase(*xs);
- * @endcode
- *
  * ## XML Example
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
  *
  * An example of an XML Element named phase setting up a SurfPhase object named
  * diamond_100 is given below.
@@ -267,6 +249,7 @@ public:
      * @param n number of parameters. Must be one
      * @param c array of \a n coefficients
      *           c[0] = The site density (kmol m-2)
+     * @deprecated To be removed after Cantera 2.6
      */
     virtual void setParameters(int n, doublereal* const c);
 

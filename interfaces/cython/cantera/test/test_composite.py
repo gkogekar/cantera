@@ -2,6 +2,7 @@ import sys
 
 import numpy as np
 from collections import OrderedDict
+import pickle
 
 import cantera as ct
 from cantera.composite import _h5py, _pandas
@@ -116,6 +117,94 @@ class TestModels(utilities.CanteraTest):
                     raise TypeError(msg) from inst
 
 
+class TestPickle(utilities.CanteraTest):
+
+    def test_pickle_gas(self):
+        gas = ct.Solution("h2o2.yaml", transport_model=None)
+        gas.TPX = 500, 500000, "H2:.75,O2:.25"
+        with open("gas.pkl", "wb") as pkl:
+            pickle.dump(gas, pkl)
+
+        with open("gas.pkl", "rb") as pkl:
+            gas2 = pickle.load(pkl)
+        self.assertNear(gas.T, gas2.T)
+        self.assertNear(gas.P, gas2.P)
+        self.assertArrayNear(gas.X, gas2.X)
+
+        self.assertEqual(gas2.transport_model, "None")
+
+    def test_pickle_gas_with_transport(self):
+        gas = ct.Solution("h2o2.yaml")
+        gas.TPX = 500, 500000, "H2:.75,O2:.25"
+        gas.transport_model = "Multi"
+        with open("gas.pkl", "wb") as pkl:
+            pickle.dump(gas, pkl)
+
+        with open("gas.pkl", "rb") as pkl:
+            gas2 = pickle.load(pkl)
+        self.assertNear(gas.T, gas2.T)
+        self.assertNear(gas.P, gas2.P)
+        self.assertArrayNear(gas.X, gas2.X)
+
+        self.assertEqual(gas2.transport_model, "Multi")
+
+    def test_pickle_interface(self):
+        gas = ct.Solution("diamond.yaml", "gas")
+        solid = ct.Solution("diamond.yaml", "diamond")
+        interface = ct.Interface("diamond.yaml", "diamond_100", (gas, solid))
+
+        with self.assertRaises(NotImplementedError):
+            with open("interface.pkl", "wb") as pkl:
+                pickle.dump(interface, pkl)
+
+
+class TestEmptyThermoPhase(utilities.CanteraTest):
+    """ Test empty Solution object """
+    @classmethod
+    def setUpClass(cls):
+        utilities.CanteraTest.setUpClass()
+        cls.gas = ct.ThermoPhase()
+
+    def test_empty_report(self):
+        with self.assertRaisesRegex(ct.CanteraError, "NotImplementedError"):
+            self.gas()
+
+    def test_empty_TP(self):
+        with self.assertRaisesRegex(ct.CanteraError, "NotImplementedError"):
+            self.gas.TP = 300, ct.one_atm
+
+    def test_empty_equilibrate(self):
+        with self.assertRaisesRegex(ct.CanteraError, "NotImplementedError"):
+            self.gas.equilibrate("TP")
+
+
+class TestEmptySolution(TestEmptyThermoPhase):
+    """ Test empty Solution object """
+    @classmethod
+    def setUpClass(cls):
+        utilities.CanteraTest.setUpClass()
+        cls.gas = ct.Solution()
+
+    def test_empty_composite(self):
+        self.assertEqual(self.gas.thermo_model, "None")
+        self.assertEqual(self.gas.composite, ("None", "None", "None"))
+
+
+class TestEmptyEdgeCases(utilities.CanteraTest):
+    """ Test for edge cases where constructors are not allowed """
+    def test_empty_phase(self):
+        with self.assertRaisesRegex(ValueError, "Arguments are insufficient to define a phase"):
+            ct.ThermoPhase(thermo="ideal-gas")
+
+    def test_empty_kinetics(self):
+        with self.assertRaisesRegex(ValueError, "Cannot instantiate"):
+            ct.Kinetics()
+
+    def test_empty_transport(self):
+        with self.assertRaisesRegex(ValueError, "Cannot instantiate"):
+            ct.Transport()
+
+
 class TestSolutionArrayIO(utilities.CanteraTest):
     """ Test SolutionArray file IO """
     @classmethod
@@ -154,6 +243,7 @@ class TestSolutionArrayIO(utilities.CanteraTest):
         self.assertEqual(states[0].P, gas.P)
         self.assertArrayNear(states[0].Y, gas.Y)
 
+    @utilities.unittest.skipIf(isinstance(_h5py, ImportError), "h5py is not installed")
     def test_import_no_norm_data(self):
         outfile = self.test_work_path / "solutionarray.h5"
         # In Python >= 3.8, this can be replaced by the missing_ok argument
@@ -186,6 +276,21 @@ class TestSolutionArrayIO(utilities.CanteraTest):
         self.assertIn('Y_H2', data.dtype.fields)
 
         b = ct.SolutionArray(self.gas)
+        b.read_csv(outfile)
+        self.assertArrayNear(states.T, b.T)
+        self.assertArrayNear(states.P, b.P)
+        self.assertArrayNear(states.X, b.X)
+
+    def test_write_csv_single_row(self):
+        gas = ct.Solution("gri30.yaml")
+        states = ct.SolutionArray(gas)
+        states.append(T=300., P=ct.one_atm, X="CH4:0.5, O2:0.4")
+        states.equilibrate("HP")
+
+        outfile = self.test_work_path / "solutionarray.csv"
+        states.write_csv(outfile)
+
+        b = ct.SolutionArray(gas)
         b.read_csv(outfile)
         self.assertArrayNear(states.T, b.T)
         self.assertArrayNear(states.P, b.P)
@@ -454,6 +559,7 @@ class TestRestorePureFluid(utilities.CanteraTest):
         b.restore_data(data)
         check(a, b)
 
+    @utilities.unittest.skipIf(isinstance(_h5py, ImportError), "h5py is not installed")
     def test_import_no_norm_water(self):
         outfile = self.test_work_path / "solutionarray.h5"
         # In Python >= 3.8, this can be replaced by the missing_ok argument
@@ -525,12 +631,11 @@ class TestSolutionSerialization(utilities.CanteraTest):
             # Check that items are ordered as expected
             self.assertEqual(
                 list(data),
-                ['name', 'thermo', 'elements', 'species', 'state', 'custom-field']
+                ["name", "thermo", "elements", "species", "state",
+                 "custom-field", "literal-string"]
             )
-            self.assertEqual(
-                list(data['custom-field']),
-                ['first', 'second', 'last']
-            )
+            self.assertEqual(list(data["custom-field"]), ["first", "second", "last"])
+            self.assertEqual(data["literal-string"], "spam\nand\neggs\n")
 
     def test_input_data_debye_huckel(self):
         soln = ct.Solution('thermo-models.yaml', 'debye-huckel-B-dot-ak')
@@ -565,7 +670,7 @@ class TestSolutionSerialization(utilities.CanteraTest):
                              gas2.forward_rate_constants)
         self.assertArrayNear(gas.mix_diff_coeffs, gas2.mix_diff_coeffs)
 
-    def test_yaml_outunits(self):
+    def test_yaml_outunits1(self):
         gas = ct.Solution('h2o2.yaml')
         gas.TPX = 500, ct.one_atm, 'H2: 1.0, O2: 1.0'
         gas.equilibrate('HP')
@@ -589,27 +694,60 @@ class TestSolutionSerialization(utilities.CanteraTest):
                              gas2.forward_rate_constants)
         self.assertArrayNear(gas.mix_diff_coeffs, gas2.mix_diff_coeffs)
 
-    def test_yaml_surface(self):
-        gas = ct.Solution('ptcombust.yaml', 'gas')
-        surf = ct.Interface('ptcombust.yaml', 'Pt_surf', [gas])
-        gas.TPY = 900, ct.one_atm, np.ones(gas.n_species)
-        surf.coverages = np.ones(surf.n_species)
-        surf.write_yaml('ptcombust-generated.yaml')
+    def test_yaml_outunits2(self):
+        gas = ct.Solution('h2o2.yaml')
+        gas.TPX = 500, ct.one_atm, 'H2: 1.0, O2: 1.0'
+        gas.equilibrate('HP')
+        gas.TP = 1500, ct.one_atm
+        units = {'length': 'cm', 'quantity': 'mol', 'energy': 'cal'}
+        system = ct.UnitSystem(units)
+        gas.write_yaml('h2o2-generated.yaml', units=system)
+        generated = utilities.load_yaml("h2o2-generated.yaml")
+        original = utilities.load_yaml(self.cantera_data_path / "h2o2.yaml")
 
+        for r1, r2 in zip(original['reactions'], generated['reactions']):
+            if 'rate-constant' in r1:
+                self.assertNear(r1['rate-constant']['A'], r2['rate-constant']['A'])
+                self.assertNear(r1['rate-constant']['Ea'], r2['rate-constant']['Ea'])
+
+        gas2 = ct.Solution("h2o2-generated.yaml")
+        self.assertArrayNear(gas.concentrations, gas2.concentrations)
+        self.assertArrayNear(gas.partial_molar_enthalpies,
+                             gas2.partial_molar_enthalpies)
+        self.assertArrayNear(gas.forward_rate_constants,
+                             gas2.forward_rate_constants)
+        self.assertArrayNear(gas.mix_diff_coeffs, gas2.mix_diff_coeffs)
+
+    def check_ptcombust(self, gas, surf):
         generated = utilities.load_yaml("ptcombust-generated.yaml")
-        for key in ('phases', 'species', 'gas-reactions', 'Pt_surf-reactions'):
+        for key in ("phases", "species", "gas-reactions", "Pt_surf-reactions"):
             self.assertIn(key, generated)
-        self.assertEqual(len(generated['gas-reactions']), gas.n_reactions)
-        self.assertEqual(len(generated['Pt_surf-reactions']), surf.n_reactions)
-        self.assertEqual(len(generated['species']), surf.n_total_species)
+        self.assertEqual(len(generated["gas-reactions"]), gas.n_reactions)
+        self.assertEqual(len(generated["Pt_surf-reactions"]), surf.n_reactions)
+        self.assertEqual(len(generated["species"]), surf.n_total_species)
 
-        gas2 = ct.Solution('ptcombust-generated.yaml', 'gas')
-        surf2 = ct.Solution('ptcombust-generated.yaml', 'Pt_surf', [gas2])
+        surf2 = ct.Solution("ptcombust-generated.yaml", "Pt_surf")
         self.assertArrayNear(surf.concentrations, surf2.concentrations)
         self.assertArrayNear(surf.partial_molar_enthalpies,
                              surf2.partial_molar_enthalpies)
         self.assertArrayNear(surf.forward_rate_constants,
                              surf2.forward_rate_constants)
+
+    def test_yaml_surface_explicit(self):
+        gas = ct.Solution("ptcombust.yaml", "gas")
+        surf = ct.Interface("ptcombust.yaml", "Pt_surf", [gas])
+        gas.TPY = 900, ct.one_atm, np.ones(gas.n_species)
+        surf.coverages = np.ones(surf.n_species)
+        surf.write_yaml("ptcombust-generated.yaml")
+        self.check_ptcombust(gas, surf)
+
+    def test_yaml_surface_adjacent(self):
+        surf = ct.Interface("ptcombust.yaml", "Pt_surf")
+        gas = surf.adjacent["gas"]
+        gas.TPY = 900, ct.one_atm, np.ones(gas.n_species)
+        surf.coverages = np.ones(surf.n_species)
+        surf.write_yaml("ptcombust-generated.yaml")
+        self.check_ptcombust(gas, surf)
 
     def test_yaml_eos(self):
         ice = ct.Solution('water.yaml', 'ice')
@@ -677,3 +815,51 @@ class TestSpeciesSerialization(utilities.CanteraTest):
         self.assertEqual(data['model'], 'gas')
         self.assertEqual(data['geometry'], 'nonlinear')
         self.assertNear(data['dipole'], 1.844)
+
+
+class TestInterfaceAdjacent(utilities.CanteraTest):
+    def test_surface(self):
+        surf = ct.Interface("ptcombust.yaml", "Pt_surf")
+        self.assertEqual(list(surf.adjacent), ["gas"])
+        self.assertEqual(surf.phase_index(surf), 0)
+        self.assertEqual(surf.phase_index("gas"), 1)
+        self.assertEqual(surf.phase_index(surf.adjacent["gas"]), 1)
+
+    def test_named_adjacent(self):
+        # override the adjacent-phases to change the order
+        surf = ct.Interface("surface-phases.yaml", "anode-surface",
+                            adjacent=["electrolyte", "graphite"])
+        self.assertEqual(list(surf.adjacent), ["electrolyte", "graphite"])
+
+    def test_edge(self):
+        tpb = ct.Interface("sofc.yaml", "tpb")
+        self.assertEqual(set(tpb.adjacent), {"metal_surface", "oxide_surface", "metal"})
+        self.assertIsInstance(tpb.adjacent["metal_surface"], ct.Interface)
+        self.assertNotIsInstance(tpb.adjacent["metal"], ct.Interface)
+        gas1 = tpb.adjacent["metal_surface"].adjacent["gas"]
+        gas2 = tpb.adjacent["oxide_surface"].adjacent["gas"]
+        gas1.X = [0.1, 0.4, 0.3, 0.2]
+        self.assertArrayNear(gas1.X, gas2.X)
+
+    def test_invalid(self):
+        with self.assertRaisesRegex(ct.CanteraError, "does not contain"):
+            surf = ct.Interface("ptcombust.yaml", "Pt_surf", ["foo"])
+
+        with self.assertRaises(TypeError):
+            surf = ct.Interface("ptcombust.yaml", "Pt_surf", [2])
+
+    def test_remote_file(self):
+        yaml = """
+        phases:
+        - name: Pt_surf
+          thermo: ideal-surface
+          adjacent-phases: [{ptcombust.yaml/phases: [gas]}]
+          species: [{ptcombust.yaml/species: all}]
+          kinetics: surface
+          reactions: [{ptcombust.yaml/reactions: all}]
+          site-density: 2.7063e-09
+        """
+
+        surf = ct.Interface(yaml=yaml)
+        self.assertEqual(surf.adjacent["gas"].n_species, 32)
+        self.assertEqual(surf.n_reactions, 24)

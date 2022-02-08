@@ -2,15 +2,17 @@
 #include "cantera/thermo.h"
 #include "cantera/kinetics.h"
 #include "cantera/thermo/IdealGasPhase.h"
-#include "cantera/thermo/SurfPhase.h"
 #include "cantera/kinetics/GasKinetics.h"
 #include "cantera/base/Solution.h"
+#include "cantera/base/Interface.h"
 
 namespace Cantera
 {
 
+#ifndef CT_NO_PYTHON
 TEST(FracCoeff, ConvertFracCoeff)
 {
+    suppress_deprecation_warnings();
     IdealGasPhase thermo1("../data/frac.cti", "gas");
     std::vector<ThermoPhase*> phases1 { &thermo1 };
     GasKinetics kinetics1;
@@ -20,6 +22,7 @@ TEST(FracCoeff, ConvertFracCoeff)
     std::vector<ThermoPhase*> phases2 { &thermo2 };
     GasKinetics kinetics2;
     importKinetics(thermo2.xml(), phases2, &kinetics2);
+    make_deprecation_warnings_fatal();
 
     ASSERT_EQ(thermo2.nSpecies(), thermo1.nSpecies());
     ASSERT_EQ(kinetics2.nReactions(), kinetics1.nReactions());
@@ -33,6 +36,7 @@ TEST(FracCoeff, ConvertFracCoeff)
         }
     }
 }
+#endif
 
 class FracCoeffTest : public testing::Test
 {
@@ -181,11 +185,15 @@ public:
     size_t nRxn, nSpec;
 };
 
+#ifndef CT_NO_PYTHON
 TEST_F(NegativePreexponentialFactor, fromCti)
 {
+    suppress_deprecation_warnings();
     setup("../data/noxNeg.cti");
+    make_deprecation_warnings_fatal();
     testNetProductionRates();
 }
+#endif
 
 TEST_F(NegativePreexponentialFactor, fromYaml)
 {
@@ -194,16 +202,14 @@ TEST_F(NegativePreexponentialFactor, fromYaml)
 }
 
 TEST(InterfaceReaction, CoverageDependency) {
-    IdealGasPhase gas("ptcombust.yaml", "gas");
-    SurfPhase surf("ptcombust.yaml", "Pt_surf");
-    shared_ptr<Kinetics> kin(newKinetics({&surf, &gas}, "ptcombust.yaml", "Pt_surf"));
-    ASSERT_EQ(kin->nReactions(), (size_t) 24);
+    auto iface = newInterface("ptcombust.yaml", "Pt_surf");
+    ASSERT_EQ(iface->kinetics()->nReactions(), (size_t) 24);
 
     double T = 500;
-    surf.setState_TP(T, 101325);
-    surf.setCoveragesByName("PT(S):0.7, H(S):0.3");
-    vector_fp kf(kin->nReactions());
-    kin->getFwdRateConstants(&kf[0]);
+    iface->thermo()->setState_TP(T, 101325);
+    iface->thermo()->setCoveragesByName("PT(S):0.7, H(S):0.3");
+    vector_fp kf(iface->kinetics()->nReactions());
+    iface->kinetics()->getFwdRateConstants(&kf[0]);
     EXPECT_NEAR(kf[0], 4.4579e7 * pow(T, 0.5), 1e-14*kf[0]);
     // Energies in XML file are converted from J/mol to J/kmol
     EXPECT_NEAR(kf[1], 3.7e20 * exp(-(67.4e6-6e6*0.3)/(GasConstant*T)), 1e-14*kf[1]);

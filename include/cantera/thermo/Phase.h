@@ -469,8 +469,8 @@ public:
     //!     @param charges Output array of species charges (elem. charge)
     void getCharges(double* charges) const;
 
-    /// @name Composition
-    //@{
+    //! @name Composition
+    //! @{
 
     //! Get the mole fractions by name.
     //!     @param threshold   Exclude species with mole fractions less than or
@@ -578,6 +578,7 @@ public:
 
     //! Set the concentrations without ignoring negative concentrations
     virtual void setConcentrationsNoNorm(const double* const conc);
+    //! @}
 
     //! Elemental mass fraction of element m
     /*!
@@ -623,8 +624,6 @@ public:
     //! molecular weight.
     const double* moleFractdivMMW() const;
 
-    //@}
-
     //! Dimensionless electrical charge of a single molecule of species k
     //! The charge is normalized by the the magnitude of the electron charge
     //!     @param k species index
@@ -648,12 +647,18 @@ public:
     }
 
     //! @name Thermodynamic Properties
-    //!@{
+    //! @{
 
     //! Temperature (K).
     //!     @return The temperature of the phase
     doublereal temperature() const {
         return m_temp;
+    }
+
+    //! Electron Temperature (K)
+    //!     @return The electron temperature of the phase
+    double electronTemperature() const {
+        return m_electronTemp;
     }
 
     //! Return the thermodynamic pressure (Pa).
@@ -665,7 +670,8 @@ public:
      *  \rho, Y_1, \dots, Y_K) \f$. Alternatively, it returns a stored value.
      */
     virtual double pressure() const {
-        throw NotImplementedError("Phase::pressure");
+        throw NotImplementedError("Phase::pressure",
+            "Not implemented for thermo model '{}'", type());
     }
 
     //! Density (kg/m^3).
@@ -704,7 +710,8 @@ public:
      *  @param p input Pressure (Pa)
      */
     virtual void setPressure(double p) {
-        throw NotImplementedError("Phase::setPressure");
+        throw NotImplementedError("Phase::setPressure",
+            "Not implemented for thermo model '{}'", type());
     }
 
     //! Set the internally stored temperature of the phase (K).
@@ -717,10 +724,22 @@ public:
                                "temperature must be positive. T = {}", temp);
         }
     }
-    //@}
+
+    //! Set the internally stored electron temperature of the phase (K).
+    //!     @param etemp Electron temperature in Kelvin
+    virtual void setElectronTemperature(const double etemp) {
+        if (etemp > 0) {
+            m_electronTemp = etemp;
+        } else {
+            throw CanteraError("Phase::setElectronTemperature",
+                               "electron temperature must be positive. Te = {}", etemp);
+        }
+    }
+
+    //! @}
 
     //! @name Mean Properties
-    //!@{
+    //! @{
 
     //! Evaluate the mole-fraction-weighted mean of an array Q.
     //! \f[ \sum_k X_k Q_k. \f]
@@ -741,8 +760,7 @@ public:
     //! @return The indicated sum. Dimensionless.
     doublereal sum_xlogx() const;
 
-    //@}
-
+    //! @}
     //! @name Adding Elements and Species
     //! These methods are used to add new elements or species. These are not
     //! usually called by user programs.
@@ -750,7 +768,7 @@ public:
     //! Since species are checked to insure that they are only composed of
     //! declared elements, it is necessary to first add all elements before
     //! adding any species.
-    //!@{
+    //! @{
 
     //! Add an element.
     //!     @param symbol Atomic symbol std::string.
@@ -861,6 +879,7 @@ public:
     }
 
     //! Set root Solution holding all phase information
+    //! @deprecated This function has no effect. To be removed after Cantera 2.6.
     virtual void setRoot(std::shared_ptr<Solution> root);
 
     //! Converts a compositionMap to a vector with entries for each species
@@ -966,6 +985,9 @@ private:
 
     doublereal m_temp; //!< Temperature (K). This is an independent variable
 
+    //! Electron Temperature (K).
+    double m_electronTemp;
+
     //! Density (kg m-3). This is an independent variable except in the case
     //! of incompressible phases, where it has to be changed using the
     //! assignDensity() method. For compressible substances, the pressure is
@@ -1010,9 +1032,6 @@ private:
 
     //! Entropy at 298.15 K and 1 bar of stable state pure elements (J kmol-1)
     vector_fp m_entropy298;
-
-    //! reference to Solution
-    std::weak_ptr<Solution> m_root;
 };
 
 }

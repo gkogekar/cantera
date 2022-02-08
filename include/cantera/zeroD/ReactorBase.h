@@ -12,6 +12,13 @@
 //! Namespace for classes implementing zero-dimensional reactor networks.
 namespace Cantera
 {
+
+//! @defgroup ZeroD Zero-dimensional reactor networks
+//!
+//! See https://cantera.org/science/reactors.html for a description of the governing
+//! equations for specific reactor types and the methods used for solving networks of
+// interconnected reactors.
+
 class FlowDevice;
 class WallBase;
 class ReactorNet;
@@ -36,6 +43,7 @@ struct SensitivityParameter
  * Base class for stirred reactors. Allows using any substance model, with
  * arbitrary inflow, outflow, heat loss/gain, surface chemistry, and volume
  * change.
+ * @ingroup ZeroD
  */
 class ReactorBase
 {
@@ -71,7 +79,7 @@ public:
     }
 
     //! @name Methods to set up a simulation.
-    //@{
+    //! @{
 
     //! Set the initial reactor volume. By default, the volume is 1.0 m^3.
     void setInitialVolume(doublereal vol) {
@@ -152,7 +160,7 @@ public:
         throw NotImplementedError("ReactorBase::initialize");
     }
 
-    //@}
+    //! @}
 
     //! Set the state of the Phase object associated with this reactor to the
     //! reactor's current state.
@@ -189,7 +197,7 @@ public:
      * The values returned are those after the last call to ReactorNet::advance
      * or ReactorNet::step.
      */
-    //@{
+    //! @{
 
     //! Returns the current volume (m^3) of the reactor.
     doublereal volume() const {
@@ -236,7 +244,7 @@ public:
         return m_state[k+2];
     }
 
-    //@}
+    //! @}
 
     //! The ReactorNet that this reactor belongs to.
     ReactorNet& network();
@@ -249,15 +257,18 @@ protected:
     size_t m_nsp;
 
     ThermoPhase* m_thermo;
-    doublereal m_vol;
-    doublereal m_enthalpy;
-    doublereal m_intEnergy;
-    doublereal m_pressure;
+    double m_vol; //!< Current volume of the reactor [m^3]
+    double m_enthalpy; //!< Current specific enthalpy of the reactor [J/kg]
+    double m_intEnergy; //!< Current internal energy of the reactor [J/kg]
+    double m_pressure; //!< Current pressure in the reactor [Pa]
     vector_fp m_state;
     std::vector<FlowDevice*> m_inlet, m_outlet;
 
     std::vector<WallBase*> m_wall;
     std::vector<ReactorSurface*> m_surfaces;
+
+    //! Vector of length nWalls(), indicating whether this reactor is on the left (0)
+    //! or right (1) of each wall.
     vector_int m_lr;
     std::string m_name;
 

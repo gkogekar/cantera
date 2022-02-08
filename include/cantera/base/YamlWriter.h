@@ -7,6 +7,7 @@
 #define CT_YAMLWRITER_H
 
 #include "cantera/base/ct_defs.h"
+#include "cantera/base/AnyMap.h"
 #include "cantera/base/Units.h"
 
 namespace Cantera
@@ -23,8 +24,11 @@ class YamlWriter
 public:
     YamlWriter();
 
+    //! Include top-level information used in YAML header block
+    void setHeader(const AnyMap& header);
+
     //! Include a phase definition for the specified Solution object
-    void addPhase(shared_ptr<Solution> soln);
+    void addPhase(shared_ptr<Solution> soln, bool includeAdjacent=true);
 
     //! Include a phase definition using the specified ThermoPhase, (optional)
     //! Kinetics, and (optional) Transport objects
@@ -59,7 +63,16 @@ public:
     //!     corresponding units supported by the UnitSystem class.
     void setUnits(const std::map<std::string, std::string>& units={});
 
+    //! Set the units to be used in the output file. Dimensions not specified
+    //! will use Cantera's defaults.
+    //! @param units  A UnitSystem object specifying dimensions (mass, length, time,
+    //!     quantity, pressure, energy, activation-energy).
+    void setUnitSystem(const UnitSystem& units=UnitSystem());
+
 protected:
+    //! Top-level information used in YAML header block
+    AnyMap m_header;
+
     std::vector<shared_ptr<Solution>> m_phases;
 
     //! @see setPrecision()

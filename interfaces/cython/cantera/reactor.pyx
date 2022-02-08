@@ -25,6 +25,7 @@ cdef class ReactorBase:
         self._inlets = []
         self._outlets = []
         self._walls = []
+        self._surfaces = []
         if isinstance(contents, ThermoPhase):
             self.insert(contents)
 
@@ -121,6 +122,11 @@ cdef class ReactorBase:
         def __get__(self):
             return self._walls
 
+    property surfaces:
+        """List of reacting surfaces installed on this reactor"""
+        def __get__(self):
+            return self._surfaces
+
     def _add_inlet(self, inlet):
         """
         Store a reference to *inlet* to prevent it from being prematurely
@@ -179,7 +185,7 @@ cdef class Reactor(ReactorBase):
         Some examples showing how to create :class:`Reactor` objects are
         shown below.
 
-        >>> gas = Solution('gri30.xml')
+        >>> gas = Solution('gri30.yaml')
         >>> r1 = Reactor(gas)
 
         This is equivalent to:
@@ -388,6 +394,178 @@ cdef class FlowReactor(Reactor):
             return (<CxxFlowReactor*>self.reactor).distance()
 
 
+cdef class ExtensibleReactor(Reactor):
+    """
+    A base class for a reactor with delegated methods where the base
+    functionality corresponds to the `Reactor` class.
+
+    The following methods of the C++ :ct:`Reactor` class can be modified by a
+    Python class which inherits from this class. For each method, the name below
+    should be prefixed with ``before_``, ``after_``, or ``replace_``, indicating
+    whether the this method should be called before, after, or instead of the
+    corresponding method from the base class.
+
+    For methods that return a value and have a ``before`` method specified, if
+    that method returns a value other than ``None`` that value will be returned
+    without calling the base class method; otherwise, the value from the base
+    class method will be returned. For methods that return a value and have an
+    ``after`` method specified, the returned value wil be the sum of the values
+    from the supplied method and the base class method.
+
+    ``initialize(self, t0: double) -> None``
+        Responsible for allocating and setting the sizes of any internal
+        variables, initializing attached walls, and setting the total number of
+        state variables associated with this reactor, `n_vars`.
+
+        Called once before the start of time integration.
+
+    ``sync_state(self) -> None``
+        Responsible for setting the state of the reactor to correspond to the
+        state of the associated ThermoPhase object.
+
+    ``get_state(self, y : double[:]) -> None``
+        Responsible for populating the state vector ``y`` (length `n_vars`)
+        with the initial state of the reactor.
+
+    ``update_state(self, y : double[:]) -> None``
+        Responsible for setting the state of the reactor object from the
+        values in the state vector ``y`` (length `n_vars`)
+
+    ``update_surface_state(self, y : double[:]) -> None``
+        Responsible for setting the state of surface phases in this reactor
+        from the values in the state vector ``y``. The length of ``y`` is the
+        total number of surface species in all surfaces.
+
+    ``get_surface_initial_conditions(self, y : double[:]) -> None``
+        Responsible for populating the state vector ``y`` with the initial
+        state of each surface phase in this reactor. The length of ``y`` is the
+        total number of surface species in all surfaces.
+
+    ``update_connected(self, update_pressure : bool) -> None``
+        Responsible for storing properties which may be accessed by connected
+        reactors, and for updating the mass flow rates of connected flow devices.
+
+    ``eval(self, t : double, LHS : double[:], RHS : double[:]) -> None``
+        Responsible for calculating the time derivative of the state at time ``t``
+        based on the current state of the reactor. For each component ``i`` of the
+        state vector, the time derivative ``dy[i]/dt`` is calculated as
+        ``LHS[i] * dy[i]/dt = RHS[i]``. ``LHS`` and ``RHS`` are arrays of length
+        `n_vars`.
+
+    ``eval_walls(self, t : double) -> None``
+        Responsible for calculating the net rate of volume change `vdot`
+        and the net rate of heat transfer `qdot` caused by walls connected
+        to this reactor.
+
+    ``eval_surfaces(LHS : double[:], RHS : double[:], sdot : double[:]) -> None``
+        Responsible for calculating the ``LHS`` and ``RHS`` (length: total number of
+        surface species in all surfaces) of the ODEs for surface species coverages,
+        and the molar production rate of bulk phase species ``sdot`` (length: number
+        of bulk phase species).
+
+    ``component_name(i : int) -> string``
+        Returns the name of the state vector component with index ``i``
+
+    ``component_index(name: string) -> int``
+        Returns the index of the state vector component named ``name``
+
+    ``species_index(name : string) -> int``
+        Returns the index of the species named ``name``, in either the bulk
+        phase or a surface phase, relative to the start of the species terms in
+        the state vector.
+    """
+
+    reactor_type = "ExtensibleReactor"
+
+    delegatable_methods = {
+        'initialize': ('initialize', 'void(double)'),
+        'sync_state': ('syncState', 'void()'),
+        'get_state': ('getState', 'void(double*)'),
+        'update_state': ('updateState', 'void(double*)'),
+        'update_surface_state': ('updateSurfaceState', 'void(double*)'),
+        'get_surface_initial_conditions': ('getSurfaceInitialConditions', 'void(double*)'),
+        'update_connected': ('updateConnected', 'void(bool)'),
+        'eval': ('eval', 'void(double, double*, double*)'),
+        'eval_walls': ('evalWalls', 'void(double)'),
+        'eval_surfaces': ('evalSurfaces', 'void(double*,double*,double*)'),
+        'component_name': ('componentName', 'string(size_t)'),
+        'component_index': ('componentIndex', 'size_t(string)'),
+        'species_index': ('speciesIndex', 'size_t(string)')
+    }
+
+    def __cinit__(self, *args, **kwargs):
+        self.accessor = dynamic_cast[CxxReactorAccessorPtr](self.rbase)
+
+    def __init__(self, *args, **kwargs):
+        assign_delegates(self, dynamic_cast[CxxDelegatorPtr](self.rbase))
+        super().__init__(*args, **kwargs)
+
+    property n_vars:
+        """
+        Get/Set the number of state variables in the reactor.
+        """
+        def __get__(self):
+            return self.reactor.neq()
+        def __set__(self, n):
+            self.accessor.setNEq(n)
+
+    property vdot:
+        """
+        Get/Set the net rate of volume change (for example, from moving walls) [m^3/s]
+        """
+        def __get__(self):
+            return self.accessor.vdot()
+        def __set__(self, vdot):
+            self.accessor.setVdot(vdot)
+
+    property qdot:
+        """
+        Get/Set the net heat transfer rate (for example, through walls) [W]
+        """
+        def __get__(self):
+            return self.accessor.qdot()
+        def __set__(self, qdot):
+            self.accessor.setQdot(qdot)
+
+    def restore_thermo_state(self):
+        """
+        Set the state of the thermo object to correspond to the state of the
+        reactor.
+        """
+        self.accessor.restoreThermoState()
+
+    def restore_surface_state(self, n):
+        """
+        Set the state of the thermo object for surface *n* to correspond to the
+        state of that surface
+        """
+        self.accessor.restoreSurfaceState(n)
+
+
+cdef class ExtensibleIdealGasReactor(ExtensibleReactor):
+    """
+    A variant of `ExtensibleReactor` where the base behavior corresponds to the
+    `IdealGasReactor` class.
+    """
+    reactor_type = "ExtensibleIdealGasReactor"
+
+
+cdef class ExtensibleConstPressureReactor(ExtensibleReactor):
+    """
+    A variant of `ExtensibleReactor` where the base behavior corresponds to the
+    `ConstPressureReactor` class.
+    """
+    reactor_type = "ExtensibleConstPressureReactor"
+
+
+cdef class ExtensibleIdealGasConstPressureReactor(ExtensibleReactor):
+    """
+    A variant of `ExtensibleReactor` where the base behavior corresponds to the
+    `IdealGasConstPressureReactor` class.
+    """
+    reactor_type = "ExtensibleIdealGasConstPressureReactor"
+
+
 cdef class ReactorSurface:
     """
     Represents a surface in contact with the contents of a reactor.
@@ -415,6 +593,7 @@ cdef class ReactorSurface:
             self.area = A
 
     def install(self, Reactor r):
+        r._surfaces.append(self)
         r.reactor.addSurface(self.surface)
 
     property area:
@@ -430,6 +609,7 @@ cdef class ReactorSurface:
         this surface.
         """
         def __get__(self):
+            self.surface.syncState()
             return self._kinetics
         def __set__(self, Kinetics k):
             self._kinetics = k
@@ -442,7 +622,7 @@ cdef class ReactorSurface:
         def __get__(self):
             if self._kinetics is None:
                 raise CanteraError('No kinetics manager present')
-            self.surface.syncCoverages()
+            self.surface.syncState()
             return self._kinetics.coverages
         def __set__(self, coverages):
             if self._kinetics is None:

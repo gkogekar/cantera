@@ -84,7 +84,7 @@ public:
      */
     virtual double pressure() const;
 
-    // @}
+    //! @}
 
     //! Returns the standard concentration \f$ C^0_k \f$, which is used to
     //! normalize the generalized concentration.
@@ -113,8 +113,8 @@ public:
      */
     virtual void getActivityCoefficients(double* ac) const;
 
-    /// @name  Partial Molar Properties of the Solution
-    //@{
+    //! @name  Partial Molar Properties of the Solution
+    //! @{
 
     virtual void getChemPotentials(double* mu) const;
     virtual void getPartialMolarEnthalpies(double* hbar) const;
@@ -126,6 +126,7 @@ public:
      */
     virtual void getPartialMolarCp(double* cpbar) const;
     virtual void getPartialMolarVolumes(double* vbar) const;
+    //! @}
 
     //! Calculate species-specific critical temperature
     /*!
@@ -138,7 +139,6 @@ public:
      */
     virtual double speciesCritTemperature(double a, double b) const;
 
-    //@}
     //! @name Initialization Methods - For Internal use
     /*!
      * The following methods are used in the process of constructing
@@ -146,24 +146,10 @@ public:
      * input file. They are not normally used in application programs.
      * To see how they are used, see importPhase().
      */
-    //@{
+    //! @{
 
     virtual bool addSpecies(shared_ptr<Species> spec);
     virtual void initThermo();
-
-    //! Retrieve \f$a\f$ and \f$b\f$ coefficients by looking up tabulated critical parameters
-    /*!
-    *  If `pureFluidParameters` are not provided for any species in the phase,
-    *  consult the critical properties tabulated in `data/inputs/critProperties.xml`.
-    *  If the species is found there, calculate pure fluid parameters \f$a_k\f$ and \f$b_k\f$ as:
-    *  \f[ a_k = 0.4278 R^2 T_c^2 / P_c \f]
-    *
-    *  and:
-    *  \f[ b_k = 0.08664 R T_c/ P_c \f]
-    *
-    *  @param iName    Name of the species
-    */
-    virtual vector_fp getCoeff(const std::string& iName);
 
     //! Set the pure fluid interaction parameters for a species
     /*!
@@ -179,11 +165,11 @@ public:
     /*!
      *  @param species_i   Name of one species
      *  @param species_j   Name of the other species
-     *  @param a           constant term in the \f$a\f$ expression [Pa-m^6/kmol^2]
-     *  @param alpha       dimensionless function of \f$T_r\f$ and \f$\omega\f$
+     *  @param a           \f$a\f$ parameter in the Peng-Robinson model [Pa-m^6/kmol^2]
      */
     void setBinaryCoeffs(const std::string& species_i,
                          const std::string& species_j, double a);
+    //! @}
 
 protected:
     // Special functions inherited from MixtureFugacityTP
@@ -222,7 +208,7 @@ public:
     //! Update the \f$a\f$, \f$b\f$, and \f$\alpha\f$ parameters
     /*!
      *  The \f$a\f$ and the \f$b\f$ parameters depend on the mole fraction and the
-     *  parameter $\f\alpha\f$ depends on the temperature. This function updates
+     *  parameter \f$\alpha\f$ depends on the temperature. This function updates
      *  the internal numbers based on the state of the object.
      */
     virtual void updateMixingExpressions();

@@ -11,19 +11,22 @@ import enum
 from pathlib import Path
 import logging
 from typing import TYPE_CHECKING
-import collections
+from collections.abc import Mapping as MappingABC
+from SCons.Variables import PathVariable, EnumVariable, BoolVariable
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-__all__ = ("logger", "remove_directory", "remove_file", "test_results",
+__all__ = ("Option", "PathOption", "BoolOption", "EnumOption", "Configuration",
+           "logger", "remove_directory", "remove_file", "test_results",
            "add_RegressionTest", "get_command_output", "listify", "which",
-           "ConfigBuilder", "multi_glob", "get_spawn", "help", "quoted")
+           "ConfigBuilder", "multi_glob", "get_spawn", "quoted")
 
 if TYPE_CHECKING:
-    from typing import Iterable, Union, List, TypeVar, Dict
+    from typing import Iterable, TypeVar, Union, List, Dict, Tuple, Optional, \
+        Iterator, Sequence
     import SCons.Environment
     import SCons.Node.FS
     import SCons.Variables
@@ -32,6 +35,405 @@ if TYPE_CHECKING:
     LFSNode = List[Union[SCons.Node.FS.File, SCons.Node.FS.Dir]]
     SCVariables = SCons.Variables.Variables
     TPathLike = TypeVar("TPathLike", Path, str)
+
+
+class Option:
+    """Object corresponding to SCons configuration option.
+
+    The purpose of this class is to collect system-dependent default parameters for
+    SCons configuration options, which are made available to both help text and
+    reST documentation. The class works in conjunction with the `Configuration` class
+    to select and convert system-dependent parameters to SCons configuration options.
+    """
+
+    def __init__(self,
+            name: str,
+            description: str,
+            default: "Union[str, bool, Dict[str, Union[str, bool]]]",
+            choices: "Optional[Union[Iterator[str], SCVariables]]" = None):
+        self.name = name
+        self.description = Option._deblank(description)
+        self.default = default
+        self.choices = choices
+
+        self._wrapper = textwrap.TextWrapper(width=80)
+        self.set_wrapper_indent(4)
+
+    def to_scons(
+            self,
+            env: "Optional[SCEnvironment]" = None
+            ) -> "Union[SCVariables, Tuple[str, str, Union[str, Dict[str, str]]]]":
+        """Convert option to SCons variable"""
+        default = self.default
+        if isinstance(default, str) and "$" in default and env is not None:
+            default = env.subst(default)
+        elif not isinstance(default, (str, bool)):
+            raise TypeError(f"Invalid defaults option with type '{type(default)}'")
+
+        if self.choices is None:
+            out = self.name, self.description, default
+        else:
+            out = self.name, self.description, default, self.choices
+
+        try:
+            if isinstance(self, BoolOption):
+                return BoolVariable(*out)
+            elif isinstance(self, PathOption):
+                return PathVariable(*out)
+            elif isinstance(self, EnumOption):
+                return EnumVariable(*out)
+            else:
+                return out
+
+        except Exception as err:
+            logger.error(
+                f"Error converting '{self.name}' to SCons variable:\n{out}")
+            raise err
+
+    @property
+    def wrapper(self) -> "textwrap.TextWrapper":
+        """Line wrapper for text output"""
+        return self._wrapper
+
+    def set_wrapper_indent(self, indent: int = 4) -> None:
+        """Update indent used for line wrapping"""
+        self._wrapper.initial_indent = indent * " "
+        self._wrapper.subsequent_indent = indent * " "
+
+    @staticmethod
+    def _deblank(string: str) -> str:
+        """Remove whitespace before and after line breaks"""
+        out = [s.strip() for s in string.split("\n")]
+        if not len(out[-1]):
+            out = out[:-1]
+        out = "\n".join(out)
+        return out
+
+    def _build_title(self, backticks: bool = True, indent: int = 3) -> str:
+        """Build title describing option and defaults"""
+        # First line: "* option-name: [ 'choice1' | 'choice2' ]"
+
+        def decorate(key: str, tick: bool = True) -> str:
+            key = f"'{key}'" if tick else key
+            return f"``{key}``" if backticks else key
+
+        # format choices
+        if isinstance(self, PathOption):
+            choices = f"path/to/{self.name}"
+            choices = f"{decorate(choices, False)}"
+        elif isinstance(self.choices, (list, tuple)):
+            choices = list(self.choices)
+            for yes_no in ["y", "n"]:
+                if yes_no in choices:
+                    # ensure consistent order
+                    choices.remove(yes_no)
+                    choices = [yes_no] + choices
+            choices = " | ".join([decorate(c) for c in choices])
+        elif isinstance(self, BoolOption) or isinstance(self.default, bool):
+            choices = f"{decorate('yes')} | {decorate('no')}"
+        else:
+            choices = f"{decorate('string', False)}"
+
+        # assemble title
+        bullet = f"{'*':<{indent}}"
+        return  f"{bullet}{decorate(self.name, False)}: [ {choices} ]\n"
+
+    def _build_description(self, backticks: bool = True, indent: int = 3) -> str:
+        """Assemble description block (help text)"""
+
+        if not backticks:
+            # Help text, wrapped and indented
+            self.set_wrapper_indent(indent)
+            out = self.wrapper.wrap(re.sub(r"\s+", " ", self.description))
+            return "\n".join(out) + "\n"
+
+        # assemble description
+        linebreak = "\n" + " " * indent
+        description = linebreak.join(self.description.split("\n"))
+        pat = r'"([a-zA-Z0-9\-\+\*$_.,: =/\'\\]+)"'
+        double_quoted = []
+        for item in re.findall(pat, description):
+            # enclose double-quoted strings in '``'
+            found = f'"{item}"'
+            double_quoted += [found]
+            replacement = f"``{found}``"
+            description = description.replace(found, replacement)
+        pat = r"\'([a-zA-Z0-9\-\+\*$_.,:=/\\]+)\'"
+        for item in re.findall(pat, description):
+            # replace "'" for single-quoted words by '``'; do not replace "'" when
+            # whitespace is enclosed or if word is part of double-quoted string
+            if any([item in dq for dq in double_quoted]):
+                continue
+            found = f"'{item}'"
+            replacement = found.replace("'", "``")
+            description = description.replace(found, replacement)
+        pat = r"\*([^\*]+)"
+        asterisks = re.findall(pat, description)
+        if len(asterisks) == 1:
+            # catch unbalanced '*', for example in '*nix'
+            found = f"*{asterisks[0]}"
+            replacement = f"\{found}"
+            description = description.replace(found, replacement)
+
+        return f"{'':<{indent}}{description}\n"
+
+    @staticmethod
+    def _build_defaults(
+            defaults: "Union[str, bool, Dict[str, Union[str, bool]]]",
+            backticks: bool = True,
+            title: str = "default",
+            indent: int = 3,
+            hanging: int = 0) -> str:
+        """Assemble defaults from dictionary"""
+
+        def decorate(key: str, tick: bool = True) -> str:
+            key = f"'{key}'" if tick else key
+            return f"``{key}``" if backticks else key
+
+        dash = f"{'-':<{indent}}"
+        level1 = f"{dash:>{2 * indent + hanging}}"
+        level2 = f"{dash:>{3 * indent + hanging}}"
+
+        # Add default platform-specific value
+        if isinstance(defaults, bool):
+            default = "yes" if defaults else "no"
+            return f"{level1}{title}: {decorate(default)}\n"
+
+        if not isinstance(defaults, dict):
+            return f"{level1}{title}: {decorate(defaults)}\n"
+
+        # First line of default options
+        compilers = {"cl": "MSVC", "gcc": "GCC", "icc": "ICC", "clang": "Clang"}
+        toolchains = {"mingw", "intel", "msvc"}
+        if any(d in compilers for d in defaults):
+            comment = "compiler"
+        elif any(d in toolchains for d in defaults):
+            comment = "toolchain"
+        else:
+            comment = "platform"
+        out = [f"{level1}{title}: {comment} dependent\n"]
+
+        # Compiler/toolchain options
+        if comment in ["compiler", "toolchain"]:
+            for key, value in defaults.items():
+                if isinstance(value, bool):
+                    value = "yes" if value else "no"
+                value = decorate(value)
+                if key in compilers:
+                    key = compilers[key]
+                if key == "default":
+                    out += [f"{level2}Otherwise: {value}"]
+                else:
+                    out += [f"{level2}If using {decorate(key, False)}: {value}"]
+            return "\n".join(out) + "\n"
+
+        # Platform options
+        for key, value in defaults.items():
+            if isinstance(value, bool):
+                value = "yes" if value else "no"
+            value = decorate(value)
+            if key == "default":
+                out += [f"{level2}Otherwise: {value}"]
+            else:
+                out += [f"{level2}{key}: {value}"]
+        return "\n".join(out) + "\n"
+
+    def to_rest(self, dev: bool = False, indent: int = 3) -> str:
+        """Convert description of option to restructured text (reST)"""
+        # assemble output
+        tag = self.name.replace("_", "-").lower()
+        if dev:
+            tag += "-dev"
+        out = f".. _{tag}:\n\n"
+        out += f"{self._build_title(backticks=True)}"
+        out += f"{self._build_description(indent=indent)}\n"
+        out += f"{self._build_defaults(self.default, backticks=True)}"
+
+        return out
+
+    def help(self, env: "Optional[SCEnvironment]" = None) -> str:
+        """Convert option help for command line interface (CLI) output"""
+        # assemble output
+        out = f"{self._build_title(backticks=False, indent=2)}"
+        out += self._build_description(backticks=False, indent=4)
+        out += self._build_defaults(self.default, backticks=False, indent=2, hanging=2)
+
+        if env is None:
+            return out
+
+        # Get the actual value in the current environment
+        actual = env[self.name] if self.name in env else None
+
+        # Fix the representation of Boolean options to match the default values
+        if actual in ["True", "False"]:
+            actual = True if actual == "True" else False
+
+        # Print the value if it differs from the default
+        if actual is not None and str(actual) != str(self.default):
+            out += self._build_defaults(
+                actual, backticks=False, title="actual", indent=2, hanging=2)
+
+        return out
+
+
+class PathOption(Option):
+    """Object corresponding to SCons PathVariable"""
+    pass
+
+
+class BoolOption(Option):
+    """Object corresponding to SCons BoolVariable"""
+    pass
+
+
+class EnumOption(Option):
+    """Object corresponding to SCons EnumVariable"""
+    pass
+
+
+class Configuration:
+    """
+    Class enabling selection of options based on a dictionary of `Option` objects
+    that allows for a differentiation between platform/compiler dependent options.
+
+    In addition, the class facilitiates the generation of formatted help text and
+    reST documentation.
+    """
+
+    header = [
+        textwrap.dedent(
+            """
+                **************************************************
+                *   Configuration options for building Cantera   *
+                **************************************************
+
+        The following options can be passed to SCons to customize the Cantera
+        build process. They should be given in the form:
+
+            scons build option1=value1 option2=value2
+
+        Variables set in this way will be stored in the 'cantera.conf' file and reused
+        automatically on subsequent invocations of scons. Alternatively, the
+        configuration options can be entered directly into 'cantera.conf' before
+        running 'scons build'. The format of this file is:
+
+            option1 = 'value1'
+            option2 = 'value2'
+        """
+        )
+    ]
+
+    def __init__(self):
+        self.options: "Dict[str, Option]" = {}
+        self.exported: "List[str]" = []
+
+    def add(self, options: "Union[Option, Sequence[Option]]") -> None:
+        """Add new options"""
+        if isinstance(options, Option):
+            options = [options]
+        for item in options:
+            if not isinstance(item, Option):
+                raise TypeError(f"Invalid option with type '{type(item)}'")
+            self.options[item.name] = item
+
+    def list_options(self):
+        """Create formatted list of available configuration options"""
+        options = sorted(self.options.keys())
+
+        # get formatting information
+        n_columns = 3
+        n_rows = len(options) // n_columns
+        n_extra = len(options) % n_columns
+        if n_extra:
+            # add one additional row to fit all options
+            n_rows += 1
+            options.extend([""] * (n_columns - n_extra))
+
+        # get width of individual columns
+        max_len = [
+            max([len(options[row + col * n_rows]) + 3
+                for row in range(n_rows)])
+            for col in range(n_columns)]
+
+        # format options as alphabetically ordered columns
+        out = []
+        for row in range(n_rows):
+            line = []
+            for col in range(n_columns):
+                line.append(f"{options[row + col * n_rows]:{max_len[col]}}")
+            out.append("".join(line))
+        return "\n".join(out)
+
+    def __getitem__(self, key: str) -> "Option":
+        """Make class subscriptable"""
+        return self.options[key]
+
+    def __iter__(self) -> "Iterator[str]":
+        """Returns itself as an iterator."""
+        for k in self.options.keys():
+            yield k
+
+    def select(self, key: str = "default") -> None:
+        """Select attribute dictionary entries corresponding to *key*"""
+        for attr, item in self.options.items():
+
+            if isinstance(item.default, dict) and key in item.default:
+                item.default = item.default[key]
+
+    def to_scons(
+            self,
+            keys: "Union[str, Sequence[str]]" = "",
+            env: "Optional[SCEnvironment]" = None
+        ) -> "List[SCVariables]":
+        """
+        Convert options to SCons variables.
+
+        To avoid redundant SCons options, each variable is only exported once.
+        """
+        if keys == "":
+            keys = list(self.options.keys())
+        elif isinstance(keys, str):
+            keys = [keys]
+
+        keys = [key for key in keys if key not in self.exported]
+        out = [self.options[key].to_scons(env) for key in keys]
+        self.exported += keys
+
+        return out
+
+    def to_rest(self, option: "Optional[str]" = None, dev: bool = False) -> str:
+        """Convert description of configuration options to restructured text (reST)"""
+        if option in self.options and option is not None:
+            return "\n" + self.options[option].to_rest(dev=dev)
+        elif option is not None:
+            raise KeyError(f"Unknown option '{option}'")
+
+        message = ["Options List"]
+        message.append(f"{'':^<{len(message[-1])}}")
+        message.append("")
+        for key in self.options.keys():
+            message.append(self.options[key].to_rest(dev=dev))
+
+        return "\n".join(message)
+
+    def help(
+            self,
+            option: "Optional[str]" = None,
+            env: "Optional[SCEnvironment]" = None) -> str:
+        """Convert configuration help for command line interface (CLI) output"""
+        if option in self.options and option is not None:
+            return "\n" + self.options[option].help(env=env)
+        elif option is not None:
+            raise KeyError(f"Unknown option '{option}'")
+
+        message = self.header
+        message.append(f"{'':->80}")
+        message.append("")
+
+        for value in self.options.values():
+            message.append(value.help(env=env))
+
+        return "\n".join(message)
 
 
 class LevelAdapter(logging.LoggerAdapter):
@@ -73,7 +475,7 @@ class BraceLogRecord(logging.LogRecord):
     def getMessage(self) -> str:
         msg = str(self.msg)
         if self.args:
-            if isinstance(self.args, collections.Mapping):
+            if isinstance(self.args, MappingABC):
                 msg = msg.format_map(self.args)
             else:
                 msg = msg.format(*self.args)
@@ -691,92 +1093,6 @@ def which(program: str) -> bool:
             if exe_file.exists() and os.access(exe_file, os.X_OK):
                 return True
     return False
-
-
-def help(env: "SCEnvironment", options: "SCVariables") -> None:
-    """Print help about configuration options and exit.
-
-    Print a nicely formatted description of a SCons configuration
-    option, its permitted values, default value, and current value
-    if different from the default.
-    """
-
-    message = [
-        textwrap.dedent(
-            """
-                **************************************************
-                *   Configuration options for building Cantera   *
-                **************************************************
-
-        The following options can be passed to SCons to customize the Cantera
-        build process. They should be given in the form:
-
-            scons build option1=value1 option2=value2
-
-        Variables set in this way will be stored in the 'cantera.conf' file and reused
-        automatically on subsequent invocations of scons. Alternatively, the
-        configuration options can be entered directly into 'cantera.conf' before
-        running 'scons build'. The format of this file is:
-
-            option1 = 'value1'
-            option2 = 'value2'
-
-                **************************************************"""
-        )
-    ]
-
-    option_wrapper = textwrap.TextWrapper(
-        initial_indent=4 * " ",
-        subsequent_indent=4 * " ",
-        width=72,
-    )
-    for opt in options.options:
-        # Extract the help description from the permitted values. Original format
-        # is in the format: "Help text (value1|value2)" for EnumVariable and
-        # BoolVariable types or "Help text" for other Variables
-        if opt.help.endswith(")"):
-            help, values = opt.help.rsplit("(", maxsplit=1)
-            values = values.rstrip(")").strip().replace("|", " | ")
-            if not values:
-                values = "string"
-        else:
-            help = opt.help
-            values = "string"
-
-        # First line: "* option-name: [ choice1 | choice2 ]"
-        lines = [f"* {opt.key}: [ {values} ]"]
-
-        # Help text, wrapped and indented 4 spaces
-        lines.extend(option_wrapper.wrap(re.sub(r"\s+", " ", help)))
-
-        # Fix the representation of Boolean options, which are stored as
-        # Python bool types
-        default = opt.default
-        if default is True:
-            default = "yes"
-        elif default is False:
-            default = "no"
-
-        lines.append(f"    - default: {default!r}")
-
-        # Get the actual value in the current environment
-        if opt.key in env:
-            actual = env.subst(f"${opt.key!s}")
-        else:
-            actual = None
-
-        # Fix the representation of Boolean options to match the default values
-        if actual == "True":
-            actual = "yes"
-        elif actual == "False":
-            actual = "no"
-
-        # Print the value if it differs from the default
-        if actual != default:
-            lines.append(f"    - actual: {actual!r}")
-        message.append("\n".join(lines))
-
-    logger.info("\n\n".join(message), print_level=False)
 
 
 def listify(value: "Union[str, Iterable]") -> "List[str]":

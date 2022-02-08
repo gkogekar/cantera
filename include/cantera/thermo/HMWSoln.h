@@ -43,21 +43,21 @@ namespace Cantera
  *       beta0 = q0 + q3(1/T - 1/Tr) + q4(ln(T/Tr)) +
  *               q1(T - Tr) + q2(T**2 - Tr**2)
  */
-//@{
+//! @{
 #define PITZER_TEMP_CONSTANT 0
 #define PITZER_TEMP_LINEAR 1
 #define PITZER_TEMP_COMPLEX1 2
-//@}
+//! @}
 
-/*
+/*!
  * @name ways to calculate the value of A_Debye
  *
  * These defines determine the way A_Debye is calculated
  */
-//@{
+//! @{
 #define A_DEBYE_CONST 0
 #define A_DEBYE_WATER 1
-//@}
+//! @}
 
 class WaterProps;
 
@@ -515,6 +515,8 @@ class WaterProps;
  * document. An example of the `beta0` block that fits the `COMPLEX1`
  * temperature dependence given above is
  *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
+ *
  * @code
  *  <binarySaltParameters cation="Na+" anion="OH-">
  *    <beta0> q0, q1, q2, q3, q4  </beta0>
@@ -589,6 +591,8 @@ class WaterProps;
  * temperature or pressure dependence of this parameter is currently allowed. An
  * example of the block is presented below.
  *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
+ *
  * @code
  *   <thetaCation cation1="Na+" cation2="H+">
  *              <Theta> 0.036 </Theta>
@@ -614,6 +618,8 @@ class WaterProps;
  * different information about thetaAnion (or thetaCation) in different blocks.
  * It's ok to specify duplicate but consistent information in multiple blocks.
  *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
+ *
  * @code
  * <psiCommonCation cation="Na+" anion1="Cl-" anion2="OH-">
  *     <Theta> -0.05 </Theta>
@@ -633,6 +639,8 @@ class WaterProps;
  * symmetrical; `species1` and `species2` may be reversed and the term will be
  * the same. An example is given below.
  *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
+ *
  * @code
  * <lambdaNeutral species1="CO2" species2="CH4">
  *     <lambda> 0.05 </lambda>
@@ -645,6 +653,8 @@ class WaterProps;
  *
  * An example `activityCoefficients` XML block for this formulation is supplied
  * below
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
  *
  * @code
  * <activityCoefficients model="Pitzer" TempModel="complex1">
@@ -747,6 +757,9 @@ class WaterProps;
  *  - B_Debye = 3.28640E9 (kg/gmol)^(1/2) / m
  *
  * An example of a fixed value implementation is given below.
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
+ *
  * @code
  *   <activityCoefficients model="Pitzer">
  *         <!-- A_Debye units = sqrt(kg/gmol)  -->
@@ -757,6 +770,8 @@ class WaterProps;
  *
  * An example of a variable value implementation within the HMWSoln object is
  * given below. The model attribute, "water", triggers the full implementation.
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
  *
  * @code
  *   <activityCoefficients model="Pitzer">
@@ -912,38 +927,9 @@ class WaterProps;
  *
  * Note, this treatment may be modified in the future, as events dictate.
  *
- * ## Instantiation of the Class
- *
- * The constructor for this phase is now located in the default ThermoFactory
- * for %Cantera. The following code snippet may be used to initialize the phase
- * using the default construction technique within %Cantera.
- *
- * @code
- *      ThermoPhase *HMW = newPhase("HMW_NaCl.xml", "NaCl_electrolyte");
- * @endcode
- *
- * A new HMWSoln object may be created by the following code snippets:
- *
- * @code
- *      HMWSoln *HMW = new HMWSoln("HMW_NaCl.xml", "NaCl_electrolyte");
- * @endcode
- *
- * or
- *
- * @code
- *    XML_Node *xm = get_XML_NameID("phase", "HMW_NaCl.xml#NaCl_electrolyte", 0);
- *    HMWSoln *dh = new HMWSoln(*xm);
- * @endcode
- *
- * or by the following call to importPhase():
- *
- * @code
- *    XML_Node *xm = get_XML_NameID("phase", "HMW_NaCl.xml#NaCl_electrolyte", 0);
- *    HMWSoln dhphase;
- *    importPhase(*xm, &dhphase);
- * @endcode
- *
  * ## XML Example
+ *
+ * *Note: The XML input format is deprecated and will be removed in %Cantera 3.0*
  *
  * The phase model name for this is called StoichSubstance. It must be supplied
  * as the model attribute of the thermo XML element entry. Within the phase XML
@@ -1286,8 +1272,6 @@ public:
      * @param k Optional parameter indicating the species. The default is to
      *         assume this refers to species 0.
      * @returns the standard Concentration in units of m^3/kmol.
-     *
-     * @param k Species index
      */
     virtual doublereal standardConcentration(size_t k=0) const;
 
@@ -1416,7 +1400,7 @@ public:
     virtual void getPartialMolarCp(doublereal* cpbar) const;
 
 public:
-    //@}
+    //! @}
 
     //! Get the saturation pressure for a given temperature.
     /*!
@@ -1674,8 +1658,6 @@ private:
      *  We assume here that the m_IionicMolality variable is up to date.
      */
     doublereal s_NBS_CLM_dlnMolalityActCoeff_dP() const;
-
-    //@}
 
 private:
     /**

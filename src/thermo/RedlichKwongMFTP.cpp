@@ -410,7 +410,7 @@ void RedlichKwongMFTP::initThermoXML(XML_Node& phaseNode, const std::string& id)
         }
 
         // Reset any coefficients which may have been set using values from
-        // 'critProperties.xml' as part of non-XML initialization, so that
+        // 'critical-properties.yaml' as part of non-XML initialization, so that
         // off-diagonal elements can be correctly initialized
         a_coeff_vec.data().assign(a_coeff_vec.data().size(), NAN);
 
@@ -433,7 +433,7 @@ void RedlichKwongMFTP::initThermoXML(XML_Node& phaseNode, const std::string& id)
             }
         }
         // If any species exist which have undefined pureFluidParameters,
-        // search the database in 'critProperties.xml' to find critical
+        // search the database in 'critical-properties.yaml' to find critical
         // temperature and pressure to calculate a and b.
 
         // Loop through all species in the CTI file
@@ -474,23 +474,41 @@ void RedlichKwongMFTP::initThermoXML(XML_Node& phaseNode, const std::string& id)
 
 void RedlichKwongMFTP::initThermo()
 {
+    // Contents of 'critical-properties.yaml', loaded later if needed
+    AnyMap critPropsDb;
+    std::unordered_map<std::string, AnyMap*> dbSpecies;
+
     for (auto& item : m_species) {
-        // Read a and b coefficients from species 'input' information (i.e. as
-        // specified in a YAML input file)
-        if (item.second->input.hasKey("equation-of-state")) {
-            auto eos = item.second->input["equation-of-state"].getMapWhere(
+        auto& data = item.second->input;
+        size_t k = speciesIndex(item.first);
+        if (!isnan(a_coeff_vec(0, k + m_kk * k))) {
+            continue;
+        }
+        bool foundCoeffs = false;
+
+        if (data.hasKey("equation-of-state") &&
+            data["equation-of-state"].hasMapWhere("model", "Redlich-Kwong"))
+        {
+            // Read a and b coefficients from species 'input' information (i.e. as
+            // specified in a YAML input file) specific to the Redlich-Kwong model
+            auto eos = data["equation-of-state"].getMapWhere(
                 "model", "Redlich-Kwong");
-            double a0 = 0, a1 = 0;
-            if (eos["a"].isScalar()) {
-                a0 = eos.convert("a", "Pa*m^6/kmol^2*K^0.5");
-            } else {
-                auto avec = eos["a"].asVector<AnyValue>(2);
-                a0 = eos.units().convert(avec[0], "Pa*m^6/kmol^2*K^0.5");
-                a1 = eos.units().convert(avec[1], "Pa*m^6/kmol^2/K^0.5");
+
+            if (eos.hasKey("a") && eos.hasKey("b")) {
+                double a0 = 0, a1 = 0;
+                if (eos["a"].isScalar()) {
+                    a0 = eos.convert("a", "Pa*m^6/kmol^2*K^0.5");
+                } else {
+                    auto avec = eos["a"].asVector<AnyValue>(2);
+                    a0 = eos.units().convert(avec[0], "Pa*m^6/kmol^2*K^0.5");
+                    a1 = eos.units().convert(avec[1], "Pa*m^6/kmol^2/K^0.5");
+                }
+                double b = eos.convert("b", "m^3/kmol");
+                foundCoeffs = true;
+                setSpeciesCoeffs(item.first, a0, a1, b);
+                m_coeffs_from_db[speciesIndex(item.first)] = false;
             }
-            double b = eos.convert("b", "m^3/kmol");
-            setSpeciesCoeffs(item.first, a0, a1, b);
-            m_coeffs_from_db[speciesIndex(item.first)] = false;
+
             if (eos.hasKey("binary-a")) {
                 AnyMap& binary_a = eos["binary-a"].as<AnyMap>();
                 const UnitSystem& units = binary_a.units();
@@ -506,24 +524,47 @@ void RedlichKwongMFTP::initThermo()
                     setBinaryCoeffs(item.first, item2.first, a0, a1);
                 }
             }
-        } else {
-            // Check if a and b are already populated for this species (only the
-            // diagonal elements of a). If not, then search 'critProperties.xml'
-            // to find critical temperature and pressure to calculate a and b.
-            size_t k = speciesIndex(item.first);
-            if (isnan(a_coeff_vec(0, k + m_kk * k))) {
-                // coeffs[0] = a0, coeffs[1] = b;
-                vector<double> coeffs = getCoeff(item.first);
 
-                // Check if species was found in the database of critical
-                // properties, and assign the results
-                if (!isnan(coeffs[0])) {
-                    // Assuming no temperature dependence (i.e. a1 = 0)
-                    setSpeciesCoeffs(item.first, coeffs[0], 0.0, coeffs[1]);
-                    m_coeffs_from_db[k] = true;
-                }
+            if (foundCoeffs) {
+                continue;
             }
         }
+
+        // Coefficients have not been populated from model-specific input
+        double Tc = NAN, Pc = NAN;
+        if (data.hasKey("critical-parameters")) {
+            // Use critical state information stored in the species entry to
+            // calculate a and b
+            auto& critProps = data["critical-parameters"].as<AnyMap>();
+            Tc = critProps.convert("critical-temperature", "K");
+            Pc = critProps.convert("critical-pressure", "Pa");
+        } else {
+            // Search 'crit-properties.yaml' to find Tc and Pc. Load data if needed
+            if (critPropsDb.empty()) {
+                critPropsDb = AnyMap::fromYamlFile("critical-properties.yaml");
+                dbSpecies = critPropsDb["species"].asMap("name");
+            }
+
+            // All names in critical-properties.yaml are upper case
+            auto ucName = boost::algorithm::to_upper_copy(item.first);
+            if (dbSpecies.count(ucName)) {
+                auto& spec = *dbSpecies.at(ucName);
+                auto& critProps = spec["critical-parameters"].as<AnyMap>();
+                Tc = critProps.convert("critical-temperature", "K");
+                Pc = critProps.convert("critical-pressure", "Pa");
+                m_coeffs_from_db[k] = true;
+            }
+        }
+
+        // Check if critical properties were found in either location
+        if (!isnan(Tc)) {
+            // Assuming no temperature dependence (i.e. a1 = 0)
+            double a = omega_a * pow(GasConstant, 2) * pow(Tc, 2.5) / Pc;
+            double b = omega_b * GasConstant * Tc / Pc;
+            setSpeciesCoeffs(item.first, a, 0.0, b);
+        }
+        // @todo: After XML is removed, this can throw an InputFileError if neither
+        // R-K parameters or critical properties were found.
     }
 }
 
@@ -571,71 +612,24 @@ void RedlichKwongMFTP::getSpeciesParameters(const std::string& name,
 
 vector<double> RedlichKwongMFTP::getCoeff(const std::string& iName)
 {
+    warn_deprecated("RedlichKwongMFTP::getCoeff", "To be removed after Cantera 2.6. "
+                    "Use of critical-properties.yaml is integrated into initThermo() "
+                    "for YAML input files.");
     vector_fp spCoeff{NAN, NAN};
+    AnyMap data = AnyMap::fromYamlFile("critical-properties.yaml");
+    const auto& species = data["species"].asMap("name");
 
-    // Get number of species in the database
-    // open xml file critProperties.xml
-    XML_Node* doc = get_XML_File("critProperties.xml");
-    size_t nDatabase = doc->nChildren();
+    // All names in critical-properties.yaml are upper case
+    auto ucName = boost::algorithm::to_upper_copy(iName);
+    if (species.count(ucName)) {
+        auto& critProps = species.at(ucName)->at("critical-parameters").as<AnyMap>();
+        double Tc = critProps.convert("critical-temperature", "K");
+        double Pc = critProps.convert("critical-pressure", "Pa");
 
-    // Loop through all species in the database and attempt to match supplied
-    // species to each. If present, calculate pureFluidParameters a_k and b_k
-    // based on crit  properties T_c and P_c:
-    for (size_t isp = 0; isp < nDatabase; isp++) {
-        XML_Node& acNodeDoc = doc->child(isp);
-        std::string iNameLower = toLowerCopy(iName);
-        std::string dbName = toLowerCopy(acNodeDoc.attrib("name"));
-
-        // Attempt to match provided specie iName to current database species
-        //  dbName:
-        if (iNameLower == dbName) {
-            // Read from database and calculate a and b coefficients
-            double vParams;
-            double T_crit=0.;
-            double P_crit=0.;
-
-            if (acNodeDoc.hasChild("Tc")) {
-                vParams = 0.0;
-                XML_Node& xmlChildCoeff = acNodeDoc.child("Tc");
-                if (xmlChildCoeff.hasAttrib("value"))
-                {
-                    std::string critTemp = xmlChildCoeff.attrib("value");
-                    vParams = strSItoDbl(critTemp);
-                }
-                if (vParams <= 0.0) //Assuming that Pc and Tc are non zero.
-                {
-                    throw CanteraError("RedlichKwongMFTP::getCoeff",
-                                       "Critical Temperature must be positive ");
-                }
-                T_crit = vParams;
-            } else {
-                throw CanteraError("RedlichKwongMFTP::getCoeff",
-                                   "Critical Temperature not in database ");
-            }
-            if (acNodeDoc.hasChild("Pc")) {
-                vParams = 0.0;
-                XML_Node& xmlChildCoeff = acNodeDoc.child("Pc");
-                if (xmlChildCoeff.hasAttrib("value"))
-                {
-                    std::string critPressure = xmlChildCoeff.attrib("value");
-                    vParams = strSItoDbl(critPressure);
-                }
-                if (vParams <= 0.0) //Assuming that Pc and Tc are non zero.
-                {
-                    throw CanteraError("RedlichKwongMFTP::getCoeff",
-                                       "Critical Pressure must be positive ");
-                }
-                P_crit = vParams;
-            } else {
-                throw CanteraError("RedlichKwongMFTP::getCoeff",
-                                   "Critical Pressure not in database ");
-            }
-
-            //Assuming no temperature dependence
-            spCoeff[0] = omega_a * pow(GasConstant, 2) * pow(T_crit, 2.5) / P_crit; //coeff a
-            spCoeff[1] = omega_b * GasConstant * T_crit / P_crit; // coeff b
-            break;
-        }
+        // calculate pure fluid parameters a_k and b_k based on T_c and P_c assuming
+        // no temperature dependence
+        spCoeff[0] = omega_a * pow(GasConstant, 2) * pow(Tc, 2.5) / Pc; //coeff a
+        spCoeff[1] = omega_b * GasConstant * Tc / Pc; // coeff b
     }
     return spCoeff;
 }
@@ -933,9 +927,9 @@ void RedlichKwongMFTP::updateMixingExpressions()
         for (size_t k = 0; k < m_kk; k++) {
             if (isnan(b_vec_Curr_[k])) {
                 if (b.size() > 0) {
-                    format_to(b, ", {}", speciesName(k));
+                    fmt_append(b, ", {}", speciesName(k));
                 } else {
-                    format_to(b, "{}", speciesName(k));
+                    fmt_append(b, "{}", speciesName(k));
                 }
             }
         }

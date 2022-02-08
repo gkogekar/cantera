@@ -20,6 +20,8 @@ class Integrator;
  *  This class is used to integrate the time-dependent governing equations for
  *  a network of reactors (Reactor, ConstPressureReactor) connected by various
  *  means, e.g. Wall, MassFlowController, Valve, PressureController.
+ *
+ * @ingroup ZeroD
  */
 class ReactorNet : public FuncEval
 {
@@ -30,7 +32,7 @@ public:
     ReactorNet& operator=(const ReactorNet&) = delete;
 
     //! @name Methods to set up a simulation.
-    //@{
+    //! @{
 
     //! Set initial time. Default = 0.0 s. Restarts integration from this time
     //! using the current mixture state as the initial condition.
@@ -54,6 +56,8 @@ public:
     //! Set the relative and absolute tolerances for integrating the
     //! sensitivity equations.
     void setSensitivityTolerances(double rtol, double atol);
+
+    //! @}
 
     //! Current value of the simulation time.
     doublereal time() {
@@ -100,8 +104,6 @@ public:
 
     //! Advance the state of all reactors in time.
     double step();
-
-    //@}
 
     //! Add the reactor *r* to this reactor network.
     void addReactor(Reactor& r);
@@ -289,6 +291,12 @@ protected:
     vector_fp m_ydot;
     vector_fp m_yest;
     vector_fp m_advancelimits;
+    //! m_LHS is a vector representing the coefficients on the
+    //! "left hand side" of each governing equation
+    vector_fp m_LHS;
+    vector_fp m_RHS;
+    bool m_checked_eval_deprecation; //!< @todo Remove after Cantera 2.6
+    std::vector<bool> m_have_deprecated_eval; //!< @todo Remove after Cantera 2.6
 };
 }
 

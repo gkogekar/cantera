@@ -9,10 +9,6 @@
 #include "cantera/base/stringUtils.h"
 #include "cantera/base/global.h"
 #include "cantera/base/utilities.h"
-#ifdef CT_USE_DEMANGLE
-  #include <boost/core/demangle.hpp>
-#endif
-
 #include <boost/algorithm/string.hpp>
 #include <fstream>
 #include <mutex>
@@ -157,40 +153,69 @@ long int getPrecision(const Cantera::AnyValue& precisionSource)
 
 string formatDouble(double x, long int precision)
 {
-    int log10x = static_cast<int>(std::floor(std::log10(std::abs(x))));
+    // This function ensures that trailing zeros resulting from round-off error
+    // are removed. Values are only rounded if at least three digits are removed,
+    // or the displayed value has multiple trailing zeros.
     if (x == 0.0) {
         return "0.0";
-    } else if (log10x >= -2 && log10x <= 3) {
-        // Adjust precision to account for leading zeros or digits left of the
-        // decimal point
-        precision -= log10x;
-        string s = fmt::format("{:.{}f}", x, precision);
-        // Trim trailing zeros, keeping at least one digit to the right of
-        // the decimal point
-        size_t last = s.size() - 1;
-        for (; last != 0; last--) {
-            if (s[last] != '0' || s[last-1] == '.') {
-                break;
-            }
-        }
-        s.resize(last + 1);
-        return s;
-    } else {
-        string s = fmt::format("{:.{}e}", x, precision);
-        // Trim trailing zeros, keeping at least one digit to the right of
-        // the decimal point
-        size_t eloc = s.find('e');
-        size_t last = eloc - 1;
-        for (; last != 0; last--) {
-            if (s[last] != '0' || s[last-1] == '.') {
-                break;
-            }
-        }
-        if (last != eloc - 1) {
-            s = string(s, 0, last + 1) + string(s.begin() + eloc, s.end());
-        }
-        return s;
     }
+
+    // Build string with full precision
+    bool useExp = std::abs(x) < 1e-2 || std::abs(x) >= 1e4;
+    int log10x;
+    size_t last;
+    string s0;
+    if (useExp) {
+        s0 = fmt::format(fmt::format("{:.{}e}", x, precision));
+        // last digit of significand
+        last = s0.size() - 5;
+        if (s0[last + 1] == 'e') {
+            // pass - most values use four letter exponent (examples: e+05, e-03)
+        } else if (s0[last] == 'e') {
+            last--; // exponents larger than e+99 or smaller than e-99 (example: e+100)
+        } else {
+            last = s0.find('e') - 1; // backstop; slower, but will always work
+        }
+    } else {
+        log10x = static_cast<int>(std::floor(std::log10(std::abs(x))));
+        s0 = fmt::format("{:.{}f}", x, precision - log10x);
+        last = s0.size() - 1; // last digit
+    }
+    if (s0[last - 2] == '0' && s0[last - 1] == '0' && s0[last] < '5') {
+        // Value ending in '00x' and should be rounded down
+    } else if (s0[last - 2] == '9' && s0[last - 1] == '9' && s0[last] > '4') {
+        // Value ending in '99y' and should be rounded up
+    } else if (s0[last - 1] == '0' && s0[last] == '0') {
+        // Remove trailing zeros
+    } else {
+        // Value should not be rounded / do not round last digit
+        return s0;
+    }
+
+    // Remove trailing zeros
+    string s1;
+    if (s0[last - 1] == '0') {
+        s1 = s0; // Recycle original string
+    } else if (useExp) {
+        s1 = fmt::format(fmt::format("{:.{}e}", x, precision - 2));
+    } else {
+        s1 = fmt::format("{:.{}f}", x, precision - log10x - 2);
+    }
+    size_t digit = last - 2;
+    while (s1[digit] == '0' && s1[digit - 1] != '.') {
+        digit--;
+    }
+
+    // Assemble rounded value and return
+    if (useExp) {
+        size_t eloc = s1.find('e');
+        s0 = string(s1.begin() + eloc, s1.end());
+    }
+    s1 = string(s1.begin(), s1.begin() + digit + 1);
+    if (useExp) {
+        return s1 + s0;
+    }
+    return s1;
 }
 
 struct Quantity
@@ -213,6 +238,7 @@ Cantera::AnyValue Empty;
 namespace YAML { // YAML converters
 
 using namespace Cantera;
+static const int max_line_length = 87;
 
 template<>
 struct convert<Cantera::AnyMap> {
@@ -262,8 +288,7 @@ YAML::Emitter& operator<<(YAML::Emitter& out, const AnyMap& rhs)
             string valueStr;
             bool foundType = true;
             if (value.is<double>()) {
-                valueStr = formatDouble(value.asDouble(),
-                                     getPrecision(value));
+                valueStr = formatDouble(value.asDouble(), getPrecision(value));
             } else if (value.is<string>()) {
                 valueStr = value.asString();
             } else if (value.is<long int>()) {
@@ -275,7 +300,9 @@ YAML::Emitter& operator<<(YAML::Emitter& out, const AnyMap& rhs)
             }
 
             if (foundType) {
-                if (width + name.size() + valueStr.size() + 4 > 79) {
+                // Check if this item will fit on the current line, including spaces
+                // for delimiters and whitespace. If not, wrap to the next line.
+                if (width + name.size() + valueStr.size() + 4 > max_line_length) {
                     out << YAML::Newline;
                     width = 15;
                 }
@@ -301,6 +328,44 @@ YAML::Emitter& operator<<(YAML::Emitter& out, const AnyMap& rhs)
     return out;
 }
 
+//! Write YAML strings spanning multiple lines if input includes endline '\n'
+void emitString(YAML::Emitter& out, const string& str0) {
+    size_t endline = str0.rfind('\n');
+    if (endline == std::string::npos) {
+        out << str0;
+        return;
+    }
+
+    // Remove trailing line break
+    string str1 = str0;
+    if (endline == str1.size() - 1) {
+        str1.erase(endline, 1);
+        endline = str1.rfind('\n');
+    }
+
+    // Deblank lines (remove whitespace surrounding line breaks)
+    while (endline != std::string::npos) {
+        size_t len = 1;
+        while (str1[endline + len] == ' ') {
+            len++; // account for whitespace after line break
+        }
+        while (str1[endline - 1] == ' ') {
+            len++; // account for whitespace before line break
+            endline--;
+        }
+        if (len > 1) {
+            // remove surrounding whitespace
+            str1.replace(endline, len, "\n");
+        }
+        endline = str1.rfind('\n', endline - 1);
+    }
+    out << YAML::Literal << str1;
+}
+
+//! Write a vector in YAML "flow" style, wrapping lines to avoid exceeding the
+//! preferred maximum line length (set by `max_line_length`). Specialized for
+//! `vector<double>` to be able to use the custom `formatDouble` function with
+//! a given precision.
 void emitFlowVector(YAML::Emitter& out, const vector<double>& v, long int precision)
 {
     out << YAML::Flow;
@@ -308,16 +373,19 @@ void emitFlowVector(YAML::Emitter& out, const vector<double>& v, long int precis
     size_t width = 15; // wild guess, but no better value is available
     for (auto& x : v) {
         string xstr = formatDouble(x, precision);
-        if (width + xstr.size() > 79) {
+        // Wrap to the next line if this item would exceed the target line length
+        if (width + xstr.size() > max_line_length) {
             out << YAML::Newline;
             width = 15;
         }
         out << xstr;
-        width += xstr.size() + 2;
+        width += xstr.size() + 2; // Update width including comma and space
     }
     out << YAML::EndSeq;
 }
 
+//! Write a vector in YAML "flow" style, wrapping lines to avoid exceeding the
+//! preferred maximum line length (set by `max_line_length`).
 template <typename T>
 void emitFlowVector(YAML::Emitter& out, const vector<T>& v)
 {
@@ -326,7 +394,8 @@ void emitFlowVector(YAML::Emitter& out, const vector<T>& v)
     size_t width = 15; // wild guess, but no better value is available
     for (const auto& x : v) {
         string xstr = fmt::format("{}", x);
-        if (width + xstr.size() > 79) {
+        // Wrap to the next line if this item would exceed the target line length
+        if (width + xstr.size() > max_line_length) {
             out << YAML::Newline;
             width = 15;
         }
@@ -340,7 +409,7 @@ YAML::Emitter& operator<<(YAML::Emitter& out, const AnyValue& rhs)
 {
     if (rhs.isScalar()) {
         if (rhs.is<string>()) {
-            out << rhs.asString();
+            emitString(out, rhs.asString());
         } else if (rhs.is<double>()) {
             out << formatDouble(rhs.asDouble(), getPrecision(rhs));
         } else if (rhs.is<long int>()) {
@@ -486,23 +555,6 @@ struct convert<Cantera::AnyValue> {
 }
 
 namespace Cantera {
-
-std::map<std::string, std::string> AnyValue::s_typenames = {
-    {typeid(double).name(), "double"},
-    {typeid(long int).name(), "long int"},
-    {typeid(std::string).name(), "string"},
-    {typeid(vector<AnyValue>).name(), "vector<AnyValue>"},
-    {typeid(vector<AnyMap>).name(), "vector<AnyMap>"},
-    {typeid(vector<double>).name(), "vector<double>"},
-    {typeid(vector<long int>).name(), "vector<long int>"},
-    {typeid(vector<bool>).name(), "vector<bool>"},
-    {typeid(vector<string>).name(), "vector<string>"},
-    {typeid(vector<vector<double>>).name(), "vector<vector<double>>"},
-    {typeid(vector<vector<long int>>).name(), "vector<vector<long int>>"},
-    {typeid(vector<vector<bool>>).name(), "vector<vector<bool>>"},
-    {typeid(vector<vector<string>>).name(), "vector<vector<string>>"},
-    {typeid(AnyMap).name(), "AnyMap"},
-};
 
 std::unordered_map<std::string, std::pair<AnyMap, int>> AnyMap::s_cache;
 
@@ -1138,19 +1190,6 @@ void AnyValue::setFlowStyle(bool flow)
     as<AnyMap>().setFlowStyle();
 }
 
-std::string AnyValue::demangle(const std::type_info& type) const
-{
-    if (s_typenames.find(type.name()) != s_typenames.end()) {
-        return s_typenames[type.name()];
-    } else {
-        #ifdef CT_USE_DEMANGLE
-            return boost::core::demangle(type.name());
-        #else
-            return type.name();
-        #endif
-    }
-}
-
 // Explicit template specializations to allow certain conversions
 
 template<>
@@ -1393,11 +1432,11 @@ std::string AnyMap::keys_str() const
     fmt::memory_buffer b;
     auto iter = this->begin();
     if (iter != this->end()) {
-        format_to(b, "{}", iter->first);
+        fmt_append(b, "{}", iter->first);
         ++iter;
     }
     while (iter != this->end()) {
-        format_to(b, ", {}", iter->first);
+        fmt_append(b, ", {}", iter->first);
         ++iter;
     }
     return to_string(b);
@@ -1420,6 +1459,28 @@ void AnyMap::setMetadata(const std::string& key, const AnyValue& value)
         m_metadata = make_shared<AnyMap>();
     }
     (*m_metadata)[key] = value;
+    propagateMetadata(m_metadata);
+}
+
+void AnyMap::copyMetadata(const AnyMap& other)
+{
+    m_line = other.m_line;
+    m_column = other.m_column;
+    if (!other.m_metadata) {
+        return;
+    }
+
+    if (m_metadata) {
+        // Fork the metadata tree at this point to avoid affecting parent nodes
+        m_metadata = make_shared<AnyMap>(*m_metadata);
+    } else {
+        m_metadata = make_shared<AnyMap>();
+    }
+
+    for (const auto& item : *other.m_metadata) {
+        (*m_metadata)[item.first] = item.second;
+    }
+
     propagateMetadata(m_metadata);
 }
 
@@ -1655,6 +1716,14 @@ bool AnyMap::addOrderingRules(const string& objectType,
     return true;
 }
 
+void AnyMap::clearCachedFile(const std::string& filename)
+{
+    std::string fullName = findInputFile(filename);
+    if (s_cache.count(fullName)) {
+        s_cache.erase(fullName);
+    }
+}
+
 AnyMap AnyMap::fromYamlString(const std::string& yaml) {
     AnyMap amap;
     try {
@@ -1756,7 +1825,7 @@ void formatInputFile(fmt::memory_buffer& b, const shared_ptr<AnyMap>& metadata,
         column2 = column;
     }
 
-    format_to(b, "|  Line |\n");
+    fmt_append(b, "|  Line |\n");
     if (!metadata->hasKey("file-contents")) {
         std::ifstream infile(findInputFile(filename));
         std::stringstream buffer;
@@ -1769,15 +1838,15 @@ void formatInputFile(fmt::memory_buffer& b, const shared_ptr<AnyMap>& metadata,
     std::stringstream contents((*metadata)["file-contents"].asString());
     while (std::getline(contents, line)) {
         if (i == lineno || i == lineno2) {
-            format_to(b, "> {: 5d} > {}\n", i+1, line);
-            format_to(b, "{:>{}}\n", "^", column + 11);
+            fmt_append(b, "> {: 5d} > {}\n", i+1, line);
+            fmt_append(b, "{:>{}}\n", "^", column + 11);
             lastShown = i;
         } else if ((lineno + 4 > i && lineno < i + 6) ||
                    (lineno2 + 4 > i && lineno2 < i + 6)) {
             if (lastShown >= 0 && i - lastShown > 1) {
-                format_to(b, "...\n");
+                fmt_append(b, "...\n");
             }
-            format_to(b, "| {: 5d} | {}\n", i+1, line);
+            fmt_append(b, "| {: 5d} | {}\n", i+1, line);
             lastShown = i;
         }
         i++;
@@ -1795,7 +1864,7 @@ std::string InputFileError::formatError(const std::string& message,
     std::string filename = metadata->getString("filename", "input string");
 
     fmt::memory_buffer b;
-    format_to(b, "Error on line {} of {}:\n{}\n", lineno+1, filename, message);
+    fmt_append(b, "Error on line {} of {}:\n{}\n", lineno+1, filename, message);
     formatInputFile(b, metadata, filename, lineno, column);
     return to_string(b);
 }
@@ -1814,20 +1883,36 @@ std::string InputFileError::formatError2(const std::string& message,
 
     fmt::memory_buffer b;
     if (filename1 == filename2) {
-        format_to(b, "Error on lines {} and {} of {}:\n",
-                  std::min(line1, line2) + 1, std::max(line1, line2) + 1,
-                  filename1);
-        format_to(b, "{}\n", message);
+        fmt_append(b, "Error on lines {} and {} of {}:\n",
+                   std::min(line1, line2) + 1, std::max(line1, line2) + 1, filename1);
+        fmt_append(b, "{}\n", message);
         formatInputFile(b, metadata1, filename1, line1, column1, line2, column2);
     } else {
-        format_to(b, "Error on line {} of {} and line {} of {}:\n{}\n",
-                  line1+1, filename1, line2+1, filename2, message);
+        fmt_append(b, "Error on line {} of {} and line {} of {}:\n{}\n",
+                   line1+1, filename1, line2+1, filename2, message);
         formatInputFile(b, metadata1, filename1, line1, column1);
-        format_to(b, "\n");
+        fmt_append(b, "\n");
         formatInputFile(b, metadata2, filename2, line2, column2);
     }
 
     return to_string(b);
+}
+
+void warn_deprecated(const std::string& source, const AnyBase& node,
+                     const std::string& message)
+{
+    if (!node.m_metadata) {
+        warn_deprecated(source, message);
+        return;
+    }
+
+    std::string filename = node.m_metadata->getString("filename", "input string");
+    fmt::memory_buffer b;
+    fmt_append(b, message);
+    fmt_append(b, "\n");
+    fmt_append(b, "On line {} of {}:\n", node.m_line+1, filename);
+    formatInputFile(b, node.m_metadata, filename, node.m_line, node.m_column);
+    warn_deprecated(source, to_string(b));
 }
 
 }

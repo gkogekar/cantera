@@ -24,7 +24,7 @@ namespace Cantera
 SurfPhase::SurfPhase(doublereal n0):
     m_press(OneAtm)
 {
-    // @TODO After Cantera 2.6, this constructor can be deleted and a
+    // @todo After Cantera 2.6, this constructor can be deleted and a
     // default value of "" can be added to for the infile argument of
     // the other constructor to make this class default constructible.
     if (n0 != -1.0) {
@@ -153,6 +153,8 @@ doublereal SurfPhase::logStandardConc(size_t k) const
 
 void SurfPhase::setParameters(int n, doublereal* const c)
 {
+    warn_deprecated("SurfPhase::setParamters(int, double*)",
+        "To be removed after Cantera 2.6.");
     if (n != 1) {
         throw CanteraError("SurfPhase::setParameters",
                            "Bad value for number of parameter");
@@ -377,6 +379,12 @@ EdgePhase::EdgePhase(doublereal n0)
     }
     setSiteDensity(n0);
     setNDim(1);
+}
+
+EdgePhase::EdgePhase(const std::string& infile, const std::string& id_)
+{
+    setNDim(1);
+    initThermoFile(infile, id_);
 }
 
 void EdgePhase::setParametersFromXML(const XML_Node& eosdata)

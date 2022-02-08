@@ -43,7 +43,7 @@ cdef class Species:
     Either of the following will produce a list of 53 `Species` objects
     containing the species defined in the GRI 3.0 mechanism::
 
-        S = ct.Species.listFromFile('gri30.yaml')
+        S = ct.Species.list_from_file("gri30.yaml")
 
         import pathlib
         S = ct.Species.listFromYaml(
@@ -110,8 +110,37 @@ cdef class Species:
     def fromYaml(text):
         """
         Create a Species object from its YAML string representation.
+
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by `Reaction.from_yaml`.
+        """
+        warnings.warn("Class method 'fromYaml' is renamed to 'from_yaml' "
+            "and will be removed after Cantera 2.6.", DeprecationWarning)
+
+        return Species.from_yaml(text)
+
+    @staticmethod
+    def from_yaml(text):
+        """
+        Create a `Species` object from its YAML string representation.
         """
         cxx_species = CxxNewSpecies(AnyMapFromYamlString(stringify(text)))
+        species = Species(init=False)
+        species._assign(cxx_species)
+        return species
+
+    @staticmethod
+    def from_dict(data):
+        """
+        Create a `Species` object from a dictionary corresponding to its YAML
+        representation.
+
+        :param data:
+            A dictionary corresponding to the YAML representation.
+        """
+        cdef CxxAnyMap any_map = dict_to_anymap(data)
+        cxx_species = CxxNewSpecies(any_map)
         species = Species(init=False)
         species._assign(cxx_species)
         return species
@@ -134,7 +163,14 @@ cdef class Species:
 
             The CTI and XML input formats are deprecated and will be removed in
             Cantera 3.0.
+
+        .. deprecated:: 2.6
+
+            To be removed after Cantera 2.6. Replaced by 'Species.list_from_file'.
         """
+        warnings.warn("Static method 'listFromFile' is renamed to 'list_from_file'."
+            " The old name will be removed after Cantera 2.6.", DeprecationWarning)
+
         if filename.lower().split('.')[-1] in ('yml', 'yaml'):
             root = AnyMapFromYamlFile(stringify(filename))
             cxx_species = CxxGetSpecies(root[stringify(section)])
@@ -143,6 +179,21 @@ cdef class Species:
 
         species = []
         for a in cxx_species:
+            b = Species(init=False)
+            b._assign(a)
+            species.append(b)
+        return species
+
+    @staticmethod
+    def list_from_file(filename, section="species"):
+        """
+        Create a list of Species objects from all of the species defined in the section
+        *section* of a YAML file. Directories on Cantera's input file path will be
+        searched for the specified file.
+        """
+        root = AnyMapFromYamlFile(stringify(filename))
+        species = []
+        for a in CxxGetSpecies(root[stringify(section)]):
             b = Species(init=False)
             b._assign(a)
             species.append(b)
@@ -190,6 +241,19 @@ cdef class Species:
 
     @staticmethod
     def listFromYaml(text, section=None):
+        """
+        Create a list of Species objects from all the species defined in a YAML string.
+
+        .. deprecated:: 2.6
+             To be deprecated with version 2.6, and removed thereafter.
+             Replaced by `Reaction.list_from_yaml`.
+        """
+        warnings.warn("Class method 'listFromYaml' is renamed to 'list_from_yaml' "
+            "and will be removed after Cantera 2.6.", DeprecationWarning)
+        return Species.list_from_yaml(text, section)
+
+    @staticmethod
+    def list_from_yaml(text, section=None):
         """
         Create a list of Species objects from all the species defined in a YAML
         string. If ``text`` is a YAML mapping, the ``section`` name of the list
@@ -303,6 +367,9 @@ cdef class ThermoPhase(_SolutionBase):
         super().__init__(*args, **kwargs)
         if 'source' not in kwargs:
             self.thermo_basis = mass_basis
+        # In composite objects, the ThermoPhase constructor needs to be called first
+        # to prevent instantiation of stand-alone 'Kinetics' or 'Transport' objects.
+        # The following is used as a sentinel.
         self._references = weakref.WeakKeyDictionary()
 
     property thermo_model:
@@ -1437,6 +1504,14 @@ cdef class ThermoPhase(_SolutionBase):
             self.thermo.setState_SV(S / self._mass_factor(),
                                     V / self._mass_factor())
 
+    property Te:
+        """Get/Set electron Temperature [K]."""
+        def __get__(self):
+            return self.thermo.electronTemperature()
+        def __set__(self, value):
+            Te = value if value is not None else self.Te
+            self.thermo.setElectronTemperature(Te)
+
     # partial molar / non-dimensional properties
     property partial_molar_enthalpies:
         """Array of species partial molar enthalpies [J/kmol]."""
@@ -1570,13 +1645,29 @@ cdef class ThermoPhase(_SolutionBase):
         def __set__(self, double value):
             self.thermo.setElectricPotential(value)
 
+    property standard_concentration_units:
+        """Get standard concentration units for this phase."""
+        def __get__(self):
+            cdef CxxUnits units = self.thermo.standardConcentrationUnits()
+            return Units.copy(units)
+
 
 cdef class InterfacePhase(ThermoPhase):
     """ A class representing a surface or edge phase"""
     def __cinit__(self, *args, **kwargs):
+        if not kwargs.get("init", True):
+            return
         if pystr(self.thermo.type()) not in ("Surf", "Edge"):
             raise TypeError('Underlying ThermoPhase object is of the wrong type.')
         self.surf = <CxxSurfPhase*>(self.thermo)
+
+    property adjacent:
+        """
+        A dictionary containing higher-dimensional phases adjacent to this interface,
+        for example bulk phases adjacent to a surface.
+        """
+        def __get__(self):
+            return self._adjacent
 
     property site_density:
         """

@@ -589,7 +589,7 @@ doublereal MixtureFugacityTP::calculatePsat(doublereal TKelvin, doublereal& mola
     //
     //      - (Gliq  - Ggas) = (Vliq - Vgas) (deltaP)
     //
-    // @TODO Suggestions for the future would be to switch it to an algorithm
+    // @todo Suggestions for the future would be to switch it to an algorithm
     //       that uses the gas molar volume and the liquid molar volumes as the
     //       fundamental unknowns.
 
@@ -875,7 +875,7 @@ int MixtureFugacityTP::solveCubic(double T, double pres, double a, double b,
         }
     }
 
-    int nSolnValues; // Represents number of solutions to the cubic equation
+    int nSolnValues = -1; // Represents number of solutions to the cubic equation
     double h2 = 4. * an * an * delta2 * delta2 * delta2; // h^2
     if (delta2 > 0.0) {
         delta = sqrt(delta2);

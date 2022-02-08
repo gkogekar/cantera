@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path, PurePath
 
 try:
-    import ruamel_yaml as yaml
-except ImportError:
     from ruamel import yaml
+except ImportError:
+    import ruamel_yaml as yaml
 
 import cantera
 
@@ -17,6 +17,15 @@ slow_test = unittest.skipIf(environ.get("CT_SKIP_SLOW", "0") == "1", "slow test"
 TEST_DATA_PATH = Path(__file__).parent / "data"
 CANTERA_DATA_PATH = Path(__file__).parents[1] / "data"
 
+def allow_deprecated(test):
+    def wrapper(*args, **kwargs):
+        cantera.suppress_deprecation_warnings()
+        try:
+            test(*args, **kwargs)
+        finally:
+            cantera.make_deprecation_warnings_fatal()
+
+    return wrapper
 
 def load_yaml(yml_file):
     # Load YAML data from file using the "safe" loading option.
@@ -51,6 +60,7 @@ class CanteraTest(unittest.TestCase):
             cls.using_tempfile = True
 
         cantera.make_deprecation_warnings_fatal()
+        cantera.use_legacy_rate_constants(False)
         cantera.add_directory(cls.test_work_path)
         cls.test_data_path = TEST_DATA_PATH
         cls.cantera_data_path = CANTERA_DATA_PATH
@@ -67,9 +77,17 @@ class CanteraTest(unittest.TestCase):
             except FileNotFoundError:
                 pass
 
+    def assertIsFinite(self, value):
+        if not np.isfinite(value):
+            self.fail(f"Value '{value}' is not finite")
+
+    def assertIsNaN(self, value):
+        if not np.isnan(value):
+            self.fail(f"Value '{value}' is a number")
+
     def assertNear(self, a, b, rtol=1e-8, atol=1e-12, msg=None):
         cmp = 2 * abs(a - b)/(abs(a) + abs(b) + 2 * atol / rtol)
-        if cmp > rtol:
+        if not cmp < rtol:
             message = ('AssertNear: %.14g - %.14g = %.14g\n' % (a, b, a-b) +
                        'Relative error of %10e exceeds rtol = %10e' % (cmp, rtol))
             if msg:
@@ -87,12 +105,12 @@ class CanteraTest(unittest.TestCase):
             a = A[i]
             b = B[i]
             cmp = 2 * abs(a - b)/(abs(a) + abs(b) + 2 * atol / rtol)
-            if cmp > rtol:
+            if not cmp < rtol:
                 message = ('AssertNear: {:.14g} - {:.14g} = {:.14g}\n'.format(a, b, a-b) +
                            'Relative error for element {} of {:10e} exceeds rtol = {:10e}'.format(i, cmp, rtol))
                 if msg:
                     message = msg + '\n' + message
-                if cmp > worst[0]:
+                if not cmp < worst[0]:
                     worst = cmp, message
 
         if worst[0]:

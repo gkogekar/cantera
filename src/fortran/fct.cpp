@@ -15,6 +15,7 @@
 #include "cantera/transport/TransportFactory.h"
 #include "cantera/thermo/ThermoFactory.h"
 #include "cantera/base/ctml.h"
+#include "cantera/base/NoExitLogger.h"
 #include "cantera/base/stringUtils.h"
 #include "cantera/kinetics/importKinetics.h"
 #include "clib/Cabinet.h"
@@ -88,6 +89,11 @@ extern "C" {
         return -1;
     }
 
+    void ctturnoffexitonerror_() {
+      Cantera::Logger* noexitlog = new Cantera::NoExitLogger;
+      setLogger(noexitlog);
+    }
+
     //--------------- Phase ---------------------//
 
     status_t phase_getname_(const integer* n, char* nm,
@@ -124,7 +130,7 @@ extern "C" {
         }
     }
 
-    doublereal phase_temperature_(const integer* n)
+    double phase_temperature_(const integer* n)
     {
         try {
             return _fph(n)->temperature();
@@ -133,7 +139,7 @@ extern "C" {
         }
     }
 
-    status_t phase_settemperature_(const integer* n, doublereal* t)
+    status_t phase_settemperature_(const integer* n, double* t)
     {
         try {
             _fph(n)->setTemperature(*t);
@@ -143,7 +149,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal phase_density_(const integer* n)
+    double phase_density_(const integer* n)
     {
         try {
             return _fph(n)->density();
@@ -152,7 +158,7 @@ extern "C" {
         }
     }
 
-    status_t phase_setdensity_(const integer* n, doublereal* rho)
+    status_t phase_setdensity_(const integer* n, double* rho)
     {
         try {
             _fph(n)->setDensity(*rho);
@@ -162,7 +168,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal phase_molardensity_(const integer* n)
+    double phase_molardensity_(const integer* n)
     {
         try {
             return _fph(n)->molarDensity();
@@ -171,7 +177,7 @@ extern "C" {
         }
     }
 
-    doublereal phase_meanmolecularweight_(const integer* n)
+    double phase_meanmolecularweight_(const integer* n)
     {
         try {
             return _fph(n)->meanMolecularWeight();
@@ -200,7 +206,7 @@ extern "C" {
         }
     }
 
-    status_t phase_getmolefractions_(const integer* n, doublereal* x)
+    status_t phase_getmolefractions_(const integer* n, double* x)
     {
         try {
             _fph(n)->getMoleFractions(x);
@@ -210,7 +216,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal phase_molefraction_(const integer* n, integer* k)
+    double phase_molefraction_(const integer* n, integer* k)
     {
         try {
             return _fph(n)->moleFraction(*k-1);
@@ -220,7 +226,7 @@ extern "C" {
 
     }
 
-    status_t phase_getmassfractions_(const integer* n, doublereal* y)
+    status_t phase_getmassfractions_(const integer* n, double* y)
     {
         try {
             ThermoPhase* p = _fph(n);
@@ -231,7 +237,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal phase_massfraction_(const integer* n, integer* k)
+    double phase_massfraction_(const integer* n, integer* k)
     {
         try {
             return _fph(n)->massFraction(*k-1);
@@ -266,7 +272,7 @@ extern "C" {
         return 0;
     }
 
-    status_t phase_setmassfractions_(const integer* n, doublereal* y, const integer* norm)
+    status_t phase_setmassfractions_(const integer* n, double* y, const integer* norm)
     {
         try {
             ThermoPhase* p = _fph(n);
@@ -292,7 +298,7 @@ extern "C" {
         return 0;
     }
 
-    status_t phase_getatomicweights_(const integer* n, doublereal* atw)
+    status_t phase_getatomicweights_(const integer* n, double* atw)
     {
         try {
             ThermoPhase* p = _fph(n);
@@ -304,7 +310,7 @@ extern "C" {
         return 0;
     }
 
-    status_t phase_getmolecularweights_(const integer* n, doublereal* mw)
+    status_t phase_getmolecularweights_(const integer* n, double* mw)
     {
         try {
             ThermoPhase* p = _fph(n);
@@ -346,7 +352,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal phase_natoms_(const integer* n, integer* k, integer* m)
+    double phase_natoms_(const integer* n, integer* k, integer* m)
     {
         try {
             return _fph(n)->nAtoms(*k-1,*m-1);
@@ -388,7 +394,7 @@ extern "C" {
         }
     }
 
-    doublereal th_enthalpy_mole_(const integer* n)
+    double th_enthalpy_mole_(const integer* n)
     {
         try {
             return _fth(n)->enthalpy_mole();
@@ -397,7 +403,7 @@ extern "C" {
         }
     }
 
-    doublereal th_intenergy_mole_(const integer* n)
+    double th_intenergy_mole_(const integer* n)
     {
         try {
             return _fth(n)->intEnergy_mole();
@@ -406,7 +412,7 @@ extern "C" {
         }
     }
 
-    doublereal th_entropy_mole_(const integer* n)
+    double th_entropy_mole_(const integer* n)
     {
         try {
             return _fth(n)->entropy_mole();
@@ -415,7 +421,7 @@ extern "C" {
         }
     }
 
-    doublereal th_gibbs_mole_(const integer* n)
+    double th_gibbs_mole_(const integer* n)
     {
         try {
             return _fth(n)->gibbs_mole();
@@ -424,7 +430,7 @@ extern "C" {
         }
     }
 
-    doublereal th_cp_mole_(const integer* n)
+    double th_cp_mole_(const integer* n)
     {
         try {
             return _fth(n)->cp_mole();
@@ -433,7 +439,7 @@ extern "C" {
         }
     }
 
-    doublereal th_cv_mole_(const integer* n)
+    double th_cv_mole_(const integer* n)
     {
         try {
             return _fth(n)->cv_mole();
@@ -442,7 +448,7 @@ extern "C" {
         }
     }
 
-    doublereal th_pressure_(const integer* n)
+    double th_pressure_(const integer* n)
     {
         try {
             return _fth(n)->pressure();
@@ -451,7 +457,7 @@ extern "C" {
         }
     }
 
-    doublereal th_enthalpy_mass_(const integer* n)
+    double th_enthalpy_mass_(const integer* n)
     {
         try {
             return _fth(n)->enthalpy_mass();
@@ -460,7 +466,7 @@ extern "C" {
         }
     }
 
-    doublereal th_intenergy_mass_(const integer* n)
+    double th_intenergy_mass_(const integer* n)
     {
         try {
             return _fth(n)->intEnergy_mass();
@@ -469,7 +475,7 @@ extern "C" {
         }
     }
 
-    doublereal th_entropy_mass_(const integer* n)
+    double th_entropy_mass_(const integer* n)
     {
         try {
             return _fth(n)->entropy_mass();
@@ -478,7 +484,7 @@ extern "C" {
         }
     }
 
-    doublereal th_gibbs_mass_(const integer* n)
+    double th_gibbs_mass_(const integer* n)
     {
         try {
             return _fth(n)->gibbs_mass();
@@ -487,7 +493,7 @@ extern "C" {
         }
     }
 
-    doublereal th_cp_mass_(const integer* n)
+    double th_cp_mass_(const integer* n)
     {
         try {
             return _fth(n)->cp_mass();
@@ -496,7 +502,7 @@ extern "C" {
         }
     }
 
-    doublereal th_cv_mass_(const integer* n)
+    double th_cv_mass_(const integer* n)
     {
         try {
             return _fth(n)->cv_mass();
@@ -505,7 +511,7 @@ extern "C" {
         }
     }
 
-    status_t th_chempotentials_(const integer* n, doublereal* murt)
+    status_t th_chempotentials_(const integer* n, double* murt)
     {
         try {
             ThermoPhase* thrm = _fth(n);
@@ -516,7 +522,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_setpressure_(const integer* n, doublereal* p)
+    status_t th_setpressure_(const integer* n, double* p)
     {
         try {
             _fth(n)->setPressure(*p);
@@ -526,7 +532,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_set_hp_(const integer* n, doublereal* v1, doublereal* v2)
+    status_t th_set_hp_(const integer* n, double* v1, double* v2)
     {
         try {
             _fth(n)->setState_HP(*v1, *v2);
@@ -536,7 +542,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_set_uv_(const integer* n, doublereal* v1, doublereal* v2)
+    status_t th_set_uv_(const integer* n, double* v1, double* v2)
     {
         try {
             _fth(n)->setState_UV(*v1, *v2);
@@ -546,7 +552,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_set_sv_(const integer* n, doublereal* v1, doublereal* v2)
+    status_t th_set_sv_(const integer* n, double* v1, double* v2)
     {
         try {
             _fth(n)->setState_SV(*v1, *v2);
@@ -556,7 +562,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_set_sp_(const integer* n, doublereal* v1, doublereal* v2)
+    status_t th_set_sp_(const integer* n, double* v1, double* v2)
     {
         try {
             _fth(n)->setState_SP(*v1, *v2);
@@ -566,7 +572,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_equil_(const integer* n, char* XY, char* solver, doublereal* rtol, int* max_steps, int* max_iter, int* estimate_equil, int* log_level, ftnlen lenxy, ftnlen lensolver)
+    status_t th_equil_(const integer* n, char* XY, char* solver, double* rtol, int* max_steps, int* max_iter, int* estimate_equil, int* log_level, ftnlen lenxy, ftnlen lensolver)
     {
         try {
             _fth(n)->equilibrate(f2string(XY,lenxy), f2string(solver,lensolver), *rtol, *max_steps, *max_iter, *estimate_equil, *log_level);
@@ -576,7 +582,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal th_refpressure_(const integer* n)
+    double th_refpressure_(const integer* n)
     {
         try {
             return _fth(n)->refPressure();
@@ -585,7 +591,7 @@ extern "C" {
         }
     }
 
-    doublereal th_mintemp_(const integer* n, integer* k)
+    double th_mintemp_(const integer* n, integer* k)
     {
         try {
             return _fth(n)->minTemp(*k-1);
@@ -594,7 +600,7 @@ extern "C" {
         }
     }
 
-    doublereal th_maxtemp_(const integer* n, integer* k)
+    double th_maxtemp_(const integer* n, integer* k)
     {
         try {
             return _fth(n)->maxTemp(*k-1);
@@ -603,7 +609,7 @@ extern "C" {
         }
     }
 
-    status_t th_getenthalpies_rt_(const integer* n, doublereal* h_rt)
+    status_t th_getenthalpies_rt_(const integer* n, double* h_rt)
     {
         try {
             ThermoPhase* thrm = _fth(n);
@@ -614,7 +620,17 @@ extern "C" {
         return 0;
     }
 
-    status_t th_getentropies_r_(const integer* n, doublereal* s_r)
+    status_t th_getgibbs_rt_(const integer* n, double* g_rt) {
+      try {
+        ThermoPhase* thrm = _fth(n);
+        thrm->getGibbs_RT(g_rt);
+      } catch(...) {
+        return handleAllExceptions(-1, ERR);
+      }
+      return 0;
+    }
+
+    status_t th_getentropies_r_(const integer* n, double* s_r)
     {
         try {
             ThermoPhase* thrm = _fth(n);
@@ -625,7 +641,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_getcp_r_(const integer* n, integer* lenm, doublereal* cp_r)
+    status_t th_getcp_r_(const integer* n, integer* lenm, double* cp_r)
     {
         try {
             ThermoPhase* thrm = _fth(n);
@@ -636,7 +652,7 @@ extern "C" {
         return 0;
     }
 
-    status_t th_getpartialmolarintenergies_r_(const integer* n, doublereal* ie)
+    status_t th_getpartialmolarintenergies_r_(const integer* n, double* ie)
     {
         try {
             ThermoPhase* thrm = _fth(n);
@@ -645,6 +661,26 @@ extern "C" {
             return handleAllExceptions(-1, ERR);
         }
         return 0;
+    }
+
+    status_t th_getpartialmolarenthalpies_(const integer* n, double* hbar) {
+      try {
+        thermo_t* thrm = _fth(n);
+        thrm->getPartialMolarEnthalpies(hbar);
+      } catch(...) {
+        return handleAllExceptions(-1, ERR);
+      }
+      return 0;
+    }
+
+    status_t th_getpartialmolarcp_(const integer* n, double* cpbar) {
+      try {
+        thermo_t* thrm = _fth(n);
+        thrm->getPartialMolarCp(cpbar);
+      } catch(...) {
+        return handleAllExceptions(-1, ERR);
+      }
+      return 0;
     }
 
     //-------------- Kinetics ------------------//
@@ -776,7 +812,7 @@ extern "C" {
         }
     }
 
-    doublereal kin_reactantstoichcoeff_(const integer* n, integer* k, integer* i)
+    double kin_reactantstoichcoeff_(const integer* n, integer* k, integer* i)
     {
         try {
             return _fkin(n)->reactantStoichCoeff(*k-1,*i-1);
@@ -785,7 +821,7 @@ extern "C" {
         }
     }
 
-    doublereal kin_productstoichcoeff_(const integer* n, integer* k, integer* i)
+    double kin_productstoichcoeff_(const integer* n, integer* k, integer* i)
     {
         try {
             return _fkin(n)->productStoichCoeff(*k-1,*i-1);
@@ -803,7 +839,7 @@ extern "C" {
         }
     }
 
-    status_t kin_getfwdratesofprogress_(const integer* n, doublereal* fwdROP)
+    status_t kin_getfwdratesofprogress_(const integer* n, double* fwdROP)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -814,7 +850,7 @@ extern "C" {
         return 0;
     }
 
-    status_t kin_getrevratesofprogress_(const integer* n, doublereal* revROP)
+    status_t kin_getrevratesofprogress_(const integer* n, double* revROP)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -834,7 +870,7 @@ extern "C" {
         }
     }
 
-    status_t kin_getnetratesofprogress_(const integer* n, doublereal* netROP)
+    status_t kin_getnetratesofprogress_(const integer* n, double* netROP)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -845,7 +881,7 @@ extern "C" {
         return 0;
     }
 
-    status_t kin_getcreationrates_(const integer* n, doublereal* cdot)
+    status_t kin_getcreationrates_(const integer* n, double* cdot)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -856,7 +892,7 @@ extern "C" {
         return 0;
     }
 
-    status_t kin_getdestructionrates_(const integer* n, doublereal* ddot)
+    status_t kin_getdestructionrates_(const integer* n, double* ddot)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -867,7 +903,7 @@ extern "C" {
         return 0;
     }
 
-    status_t kin_getnetproductionrates_(const integer* n, doublereal* wdot)
+    status_t kin_getnetproductionrates_(const integer* n, double* wdot)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -878,7 +914,7 @@ extern "C" {
         return 0;
     }
 
-    doublereal kin_multiplier_(const integer* n, integer* i)
+    double kin_multiplier_(const integer* n, integer* i)
     {
         try {
             return _fkin(n)->multiplier(*i);
@@ -887,7 +923,7 @@ extern "C" {
         }
     }
 
-    status_t kin_getequilibriumconstants_(const integer* n, doublereal* kc)
+    status_t kin_getequilibriumconstants_(const integer* n, double* kc)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -914,7 +950,7 @@ extern "C" {
         return 0;
     }
 
-    status_t kin_setmultiplier_(const integer* n, integer* i, doublereal* v)
+    status_t kin_setmultiplier_(const integer* n, integer* i, double* v)
     {
         try {
             _fkin(n)->setMultiplier(*i-1,*v);
@@ -924,7 +960,7 @@ extern "C" {
         return 0;
     }
 
-    status_t kin_advancecoverages_(const integer* n, doublereal* tstep)
+    status_t kin_advancecoverages_(const integer* n, double* tstep)
     {
         try {
             Kinetics* k = _fkin(n);
@@ -966,7 +1002,7 @@ extern "C" {
         }
     }
 
-    doublereal trans_viscosity_(const integer* n)
+    double trans_viscosity_(const integer* n)
     {
         try {
             return _ftrans(n)->viscosity();
@@ -975,7 +1011,7 @@ extern "C" {
         }
     }
 
-    doublereal trans_electricalconductivity_(const integer* n)
+    double trans_electricalconductivity_(const integer* n)
     {
         try {
             return _ftrans(n)->electricalConductivity();
@@ -984,7 +1020,7 @@ extern "C" {
         }
     }
 
-    doublereal trans_thermalconductivity_(const integer* n)
+    double trans_thermalconductivity_(const integer* n)
     {
         try {
             return _ftrans(n)->thermalConductivity();
@@ -993,7 +1029,7 @@ extern "C" {
         }
     }
 
-    status_t trans_getthermaldiffcoeffs_(const integer* n, doublereal* dt)
+    status_t trans_getthermaldiffcoeffs_(const integer* n, double* dt)
     {
         try {
             _ftrans(n)->getThermalDiffCoeffs(dt);
@@ -1003,7 +1039,7 @@ extern "C" {
         }
     }
 
-    status_t trans_getmixdiffcoeffs_(const integer* n, doublereal* d)
+    status_t trans_getmixdiffcoeffs_(const integer* n, double* d)
     {
         try {
             _ftrans(n)->getMixDiffCoeffs(d);
@@ -1013,7 +1049,7 @@ extern "C" {
         }
     }
 
-    status_t trans_getmixdiffcoeffsmass_(const integer* n, doublereal* d)
+    status_t trans_getmixdiffcoeffsmass_(const integer* n, double* d)
     {
         try {
             _ftrans(n)->getMixDiffCoeffsMass(d);
@@ -1023,7 +1059,7 @@ extern "C" {
         }
     }
 
-    status_t trans_getmixdiffcoeffsmole_(const integer* n, doublereal* d)
+    status_t trans_getmixdiffcoeffsmole_(const integer* n, double* d)
     {
         try {
             _ftrans(n)->getMixDiffCoeffsMole(d);
@@ -1033,7 +1069,7 @@ extern "C" {
         }
     }
 
-    status_t trans_getbindiffcoeffs_(const integer* n, integer* ld, doublereal* d)
+    status_t trans_getbindiffcoeffs_(const integer* n, integer* ld, double* d)
     {
         try {
             _ftrans(n)->getBinaryDiffCoeffs(*ld,d);
@@ -1043,7 +1079,7 @@ extern "C" {
         }
     }
 
-    status_t trans_getmultidiffcoeffs_(const integer* n, integer* ld, doublereal* d)
+    status_t trans_getmultidiffcoeffs_(const integer* n, integer* ld, double* d)
     {
         try {
             _ftrans(n)->getMultiDiffCoeffs(*ld,d);
@@ -1053,7 +1089,7 @@ extern "C" {
         }
     }
 
-    status_t trans_setparameters_(const integer* n, integer* type, integer* k, doublereal* d)
+    status_t trans_setparameters_(const integer* n, integer* type, integer* k, double* d)
     {
         try {
             _ftrans(n)->setParameters(*type, *k, d);

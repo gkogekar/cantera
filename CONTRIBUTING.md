@@ -55,6 +55,11 @@
 * Avoid introducing trailing whitespace
 * Limit line lengths to 88 characters when possible
 * Write comments to explain non-obvious operations
+* Use whitespaces to improve code readability (examples: after commas; before and
+  after mathematical operators (`+`/`-`/`*`/`/` except `^`), binary operators
+  (`&&`/`||`/...), and comparisons (`<`/`>`/`==`/...); before and after equality
+  signs `=` unless used for the assignment of a default parameter)
+* Do not go out of your way to change formatting in otherwise unmodified code
 
 ## C++
 
@@ -67,10 +72,8 @@
 * Class names use `InitialCapsNames`
 * Methods use `camelCaseNames`
 * Do not indent the contents of namespaces
-* Code may make use of most C++11 features, with the exceptions of delegating
-  constructors, inheriting constructors, and non-static data member
-  initializers. These limitations are needed to keep the minimum required
-  compiler versions at GCC 4.6, Clang 3.1, Visual Studio 2013 and Intel 14.0.
+* Code should follow the C++11 standard, with minimum required compiler versions
+  GCC 4.8, Clang 3.4, MSVC 14.0 (2015) and Intel 15.0.
 * Avoid manual memory management (i.e. `new` and `delete`), preferring to use
   standard library containers, as well as `std::unique_ptr` and
   `std::shared_ptr` when dynamic allocation is required.
