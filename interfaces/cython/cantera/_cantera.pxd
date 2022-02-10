@@ -1071,7 +1071,7 @@ cdef extern from "cantera/oneD/Boundary1D.h":
 
 cdef extern from "cantera/oneD/StFlow.h":
     cdef cppclass CxxStFlow "Cantera::StFlow":
-        CxxStFlow(CxxIdealGasPhase*, int, int)
+        CxxStFlow(CxxThermoPhase*, int, int)
         void setKinetics(CxxKinetics&) except +translate_exception
         void setTransport(CxxTransport&, cbool) except +translate_exception
         void setTransport(CxxTransport&) except +translate_exception
@@ -1601,6 +1601,7 @@ cdef np.ndarray get_transport_2d(Transport tran, transportMethod2d method)
 cdef np.ndarray get_transport_polynomial(Transport tran, transportPolyMethod1i method, int index, int n_coeffs)
 cdef np.ndarray get_binary_transport_polynomial(Transport tran, transportPolyMethod2i method, int indexi, int indexj, int n_coeffs)
 cdef CxxIdealGasPhase* getIdealGasPhase(ThermoPhase phase) except *
+cdef CxxThermoPhase* getThermoPhase(ThermoPhase phase) except *
 cdef wrapSpeciesThermo(shared_ptr[CxxSpeciesThermo] spthermo)
 cdef int assign_delegates(object, CxxDelegator*) except -1
 

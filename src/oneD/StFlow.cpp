@@ -34,12 +34,7 @@ StFlow::StFlow(ThermoPhase* ph, size_t nsp, size_t points) :
     m_zfixed(Undef),
     m_tfixed(-1.)
 {
-    if (ph->type() == "IdealGas") {
-        m_thermo = static_cast<IdealGasPhase*>(ph);
-    } else {
-        throw CanteraError("StFlow::StFlow",
-                           "Unsupported phase type: need 'IdealGasPhase'");
-    }
+    m_thermo = ph;
     m_type = cFlowType;
     m_points = points;
 

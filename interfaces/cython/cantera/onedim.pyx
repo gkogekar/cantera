@@ -623,6 +623,8 @@ cdef CxxIdealGasPhase* getIdealGasPhase(ThermoPhase phase) except *:
     if pystr(phase.thermo.type()) != "IdealGas":
         raise TypeError('ThermoPhase object is not an IdealGasPhase')
     return <CxxIdealGasPhase*>(phase.thermo)
+cdef CxxThermoPhase* getThermoPhase(ThermoPhase phase) except *:
+    return <CxxThermoPhase*>(phase.thermo)
 
 
 cdef class IdealGasFlow(_FlowBase):
@@ -656,7 +658,7 @@ cdef class IdealGasFlow(_FlowBase):
     well as arbitrary variation of the transport properties.
     """
     def __cinit__(self, _SolutionBase thermo, *args, **kwargs):
-        gas = getIdealGasPhase(thermo)
+        gas = getThermoPhase(thermo)
         self.flow = new CxxStFlow(gas, thermo.n_species, 2)
 
 
