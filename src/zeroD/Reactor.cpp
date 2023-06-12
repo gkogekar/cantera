@@ -292,6 +292,36 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
     fill(sdot, sdot + m_nsp, 0.0);
     size_t loc = 0; // offset into ydot
 
+    // Loop through all surfaces to find and calculate net prod rates at the edges
+    vector_fp RHS_edge(m_nv_surf, 0.0);
+    size_t offset  =  m_nv - m_nv_surf;
+    double A_edge;
+
+    for(auto S : m_surfaces) {
+        Kinetics* kin = S->kinetics();
+        // Modify surface concentration if the Edge is present
+        if(kin->kineticsType() == "Edge")
+        {
+            SurfPhase* surf = S->thermo();
+            double rs0 = 1.0/surf->siteDensity();
+            size_t nk = surf->nSpecies();
+            double sum = 0.0;
+            S->syncState();
+            kin->getNetProductionRates(&m_work[0]);
+            A_edge = S->area();
+            // Save sdot in RHS_edge vector for surface species
+            // First nk species are dummy species defined for the edge and can be ignored.
+            size_t surf_nsp =  kin->nTotalSpecies();
+            for(size_t k = nk; k < surf_nsp; k++)
+            {
+                // First get the index of species k in the global array of all variables
+                string sp_name  =  kin->kineticsSpeciesName(k);
+                size_t ind_k = componentIndex(sp_name);
+                RHS_edge[ind_k - offset] += m_work[k];
+            }
+        }
+    }
+    
     for (auto S : m_surfaces) {
         Kinetics* kin = S->kinetics();
         SurfPhase* surf = S->thermo();
@@ -301,8 +331,14 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
         double sum = 0.0;
         S->syncState();
         kin->getNetProductionRates(&m_work[0]);
+        size_t ns = kin->reactionPhaseIndex();
+        size_t surfloc = kin->kineticsSpeciesIndex(0,ns);
+        double As = S->area();
         for (size_t k = 1; k < nk; k++) {
             RHS[loc + k] = m_work[k] * rs0 * surf->size(k);
+            if(kin->kineticsType() != "Edge") {
+                RHS[loc + k] += (A_edge/As)*RHS_edge[loc + k] * rs0 * surf->size(k);
+            }
             sum -= RHS[loc + k];
         }
         RHS[loc] = sum;
