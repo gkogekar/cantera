@@ -294,9 +294,16 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
 
     // Loop through all surfaces to find and calculate net prod rates at the edges
     vector_fp RHS_edge(m_nv_surf, 0.0);
+    vector_fp surfArea(nSurfs(), 0.0);
     size_t offset  =  m_nv - m_nv_surf;
     double A_edge;
 
+    for(auto S : m_surfaces) {
+        Kinetics* kin = S->kinetics();
+        SurfPhase* surf = S->thermo();
+        size_t phase_id = kin->phaseIndex(surf->name());
+        surfArea[phase_id] = S->area();
+    }
     for(auto S : m_surfaces) {
         Kinetics* kin = S->kinetics();
         // Modify surface concentration if the Edge is present
@@ -312,12 +319,38 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
             // Save sdot in RHS_edge vector for surface species
             // First nk species are dummy species defined for the edge and can be ignored.
             size_t surf_nsp =  kin->nTotalSpecies();
+
+            // Find two surface phases involved in the edge reactions 
+            size_t ph1 = -1, ph2 = -1;
+            for(size_t k = nk; k < surf_nsp; k++)
+            {
+                // Get species phase index
+                size_t ph_ind = kin->speciesPhaseIndex(k);
+                if(ph1 == -1)
+                {
+                    ph1 = ph_ind;
+                } else if (ph_ind>= 0 && ph_ind != ph1)
+                {
+                    ph2 = ph_ind;
+                }
+            }
+
+            // Get sdot values 
             for(size_t k = nk; k < surf_nsp; k++)
             {
                 // First get the index of species k in the global array of all variables
                 string sp_name  =  kin->kineticsSpeciesName(k);
                 size_t ind_k = componentIndex(sp_name);
-                RHS_edge[ind_k - offset] += m_work[k];
+                
+                // Get species phase 
+                size_t phase_id = kin->speciesPhaseIndex(k);
+                if(phase_id == ph1)
+                {
+                    phase_id = ph2;
+                } else {
+                    phase_id = ph1;
+                }
+                RHS_edge[ind_k - offset] += surfArea[phase_id]*m_work[k]/A_edge;
             }
         }
     }
@@ -337,7 +370,7 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
         for (size_t k = 1; k < nk; k++) {
             RHS[loc + k] = m_work[k] * rs0 * surf->size(k);
             if(kin->kineticsType() != "Edge") {
-                RHS[loc + k] += (A_edge/As)*RHS_edge[loc + k] * rs0 * surf->size(k);
+                RHS[loc + k] += RHS_edge[loc + k] * rs0 * surf->size(k);
             }
             sum -= RHS[loc + k];
         }
