@@ -292,6 +292,74 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
     fill(sdot, sdot + m_nsp, 0.0);
     size_t loc = 0; // offset into ydot
 
+    // Loop through all surfaces to find and calculate net prod rates at the edges
+    
+    // Vector to save sdot contributions due to the surface diffusion [Length: m_nv_surf]
+    vector<double> RHS_edge(m_nv_surf, 0.0);
+    
+    // Vector to site densities of each surface, later needed in the calculation of sdot term
+    vector<double> surfDensity(nSurfs(), 0.0);
+
+    // Vector to save global phase_id of each surface species in the mechanism
+    vector<int> surfSpeciesPhase(m_nv_surf, 0.0);
+
+    size_t offset  =  m_nv - m_nv_surf;
+    double A_edge;
+
+    // Loop over all surfaces and save facet area in `surfArea' vector.
+    size_t phase_id = 0;
+    size_t offset_nsurf = 0;
+    for(auto S : m_surfaces) {
+        Kinetics* kin = S->kinetics();
+        SurfPhase* surf = S->thermo();
+        surfDensity[phase_id] = surf->siteDensity();
+        // Update surfSpeciesPhasevector for each species
+        for(size_t k = 0; k < surf->nSpecies(); k++)
+        {
+            surfSpeciesPhase[offset_nsurf + k] =  phase_id;
+        }
+        offset_nsurf += surf->nSpecies();
+        phase_id++;
+    }
+
+    for(auto S : m_surfaces) {
+        Kinetics* kin = S->kinetics();
+        // Modify surface concentration if the edge is present
+        if(kin->kineticsType() == "edge")
+        {
+            SurfPhase* surf = S->thermo();
+            double rs0 = 1.0/surf->siteDensity();
+            size_t nk = surf->nSpecies(); // Only one dummy species here, nk = 1 for edges
+            double sum = 0.0;
+            S->syncState();
+            kin->getNetProductionRates(&m_work[0]);
+            A_edge = S->area();
+            // Save sdot in RHS_edge vector for surface species
+            // First nk species are dummy species defined for the edge and can be ignored.
+            size_t surf_nsp =  kin->nTotalSpecies(); 
+
+            // Calculate sdot values for surface diffusion reaction
+            for(size_t k = nk+m_nsp; k < surf_nsp; k++)
+            {
+                // Get the index of species k in the global array of all variables
+                string sp_name  =  kin->kineticsSpeciesName(k);
+                size_t ind_k = componentIndex(sp_name) - offset; 
+                
+                // Get phase-id of species k
+                size_t phase_id = surfSpeciesPhase[ind_k];
+                if(A_edge > 0.0)
+                {
+                    if(phase_id==0) // Hardcoded for now (111 is the first surface in YAML)
+                    {
+                        RHS_edge[ind_k] += 0.06341181568684097*m_work[k]; // Hardcoded
+                    } else {
+                        RHS_edge[ind_k] += m_work[k]; // Hardcoded
+                    }
+                }
+            }
+        }
+    }
+
     for (auto S : m_surfaces) {
         Kinetics* kin = S->kinetics();
         SurfPhase* surf = S->thermo();
@@ -303,6 +371,10 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
         kin->getNetProductionRates(&m_work[0]);
         for (size_t k = 1; k < nk; k++) {
             RHS[loc + k] = m_work[k] * rs0 * surf->size(k);
+            // Add sdot term from surface diffusion
+            if(kin->kineticsType() != "edge") {
+                RHS[loc + k] += RHS_edge[loc + k]/surfDensity[0]/surfDensity[1];// * rs0 * surf->size(k);
+            }
             sum -= RHS[loc + k];
         }
         RHS[loc] = sum;
