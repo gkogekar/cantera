@@ -8,6 +8,7 @@
 
 #include "ReactorBase.h"
 #include "cantera/numerics/eigen_sparse.h"
+#include "cantera/base/Array.h"
 
 
 namespace Cantera
@@ -265,6 +266,9 @@ protected:
 
     virtual void evalSurfaces(double* RHS, double* sdot);
 
+    // For surface diffusion
+    virtual void calculateFacetRatio();
+
     //! Update the state of SurfPhase objects attached to this reactor
     virtual void updateSurfaceState(double* y);
 
@@ -306,6 +310,11 @@ protected:
 
     //! Vector of triplets representing the jacobian
     vector<Eigen::Triplet<double>> m_jac_trips;
+
+    // For surface diffusion
+    Array2D facet_ratio;
+    Array2D edge_phaseID;
+    vector<int> surfSpeciesPhase;
 };
 }
 

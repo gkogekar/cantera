@@ -110,6 +110,11 @@ void Reactor::initialize(double t0)
     }
     m_nv += m_nv_surf;
     m_work.resize(maxnt);
+
+    // Surface diffusion
+    //writelog("\n Calling facetRatio");
+    calculateFacetRatio();
+    //writelog("\n done calling facetRation");
 }
 
 size_t Reactor::nSensParams() const
@@ -297,108 +302,46 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
     // Vector to save sdot contributions due to the surface diffusion [Length: m_nv_surf]
     vector<double> RHS_edge(m_nv_surf, 0.0);
     
-    // Vector to save area of each surface, later needed in the calculation of sdot term
-    vector<double> surfArea(nSurfs(), 0.0);
-    
-    // Vector to site densities of each surface, later needed in the calculation of sdot term
-    vector<double> surfSiteDensity(nSurfs(), 0.0);
-
-    // Vector to save global phase_id of each surface species in the mechanism
-    vector<int> surfSpeciesPhase(m_nv_surf, 0.0);
-
     size_t offset  =  m_nv - m_nv_surf;
-    double A_edge;
 
-    // Loop over all surfaces and save facet area in `surfArea' vector.
-    size_t phase_id = 0;
-    size_t offset_nsurf = 0;
-    for(auto S : m_surfaces) {
-        Kinetics* kin = S->kinetics();
-        SurfPhase* surf = S->thermo();
-        surfArea[phase_id] = S->area();
-        surfSiteDensity[phase_id] = surf->siteDensity();
-        // Update surfSpeciesPhasevector for each species
-        for(size_t k = 0; k < surf->nSpecies(); k++)
-        {
-            surfSpeciesPhase[offset_nsurf + k] =  phase_id;
-        }
-        offset_nsurf += surf->nSpecies();
-        phase_id++;
-    }
     // Sync all surfaces before any calculation
     for(auto S : m_surfaces) {
         S->syncState();
     }
+    size_t i_edge = 0;
     for(auto S : m_surfaces) {
         Kinetics* kin = S->kinetics();
         // Modify surface concentration if the edge is present
         if(kin->kineticsType() == "edge")
         {
             SurfPhase* surf = S->thermo();
-            double rs0 = 1.0/surf->siteDensity();
             size_t nk = surf->nSpecies(); // Only one dummy species here, nk = 1 for edges
-            double sum = 0.0;
             S->syncState();
             kin->getNetProductionRates(&m_work[0]);
-            A_edge = S->area();
             // Save sdot in RHS_edge vector for surface species
             // First nk species are dummy species defined for the edge and can be ignored.
             size_t surf_nsp =  kin->nTotalSpecies(); 
 
-            // Find two surface phases involved in the edge reactions 
-            size_t ph1 = -1, ph2 = -1;
-            // surf_nsp contains `m_nsp' gas species, `nk' edge species and 
-            // surface species from adjacent surfaces
-            for(size_t k = nk+m_nsp; k < surf_nsp; k++)
-            {
-                // Get the index of species k in the array with all surface species
-                string sp_name  =  kin->kineticsSpeciesName(k);
-                size_t ind_k = componentIndex(sp_name) - offset;
-
-                // Get the phase index of surface species k in the entire reactor
-                size_t phase_id = surfSpeciesPhase[ind_k];
-                // Find two phases involved in the surface diffusion reaction
-                if(ph1 == -1)
-                {
-                    ph1 = phase_id;
-                } else if (phase_id>= 0 && phase_id != ph1)
-                {
-                    ph2 = phase_id;
-                }
-            }
-            // Calculate Mint constant: (gamma*A)_2/(gamma*A)_1
-            double m_int = surfArea[ph2]*surfSiteDensity[ph2]/(surfArea[ph1]*surfSiteDensity[ph1]);
-            
             // Calculate sdot values for surface diffusion reaction
             for(size_t k = nk+m_nsp; k < surf_nsp; k++)
             {
                 // Get the index of species k in the global array of all variables
                 string sp_name  =  kin->kineticsSpeciesName(k);
                 size_t ind_k = componentIndex(sp_name) - offset; 
+                //size_t ind_k = speciesIndex(sp_name); 
                 
                 // Get phase-id of species k
                 size_t phase_id = surfSpeciesPhase[ind_k];
-                double multiplier = 1;
-                double gamma_prod = surfSiteDensity[ph1]*surfSiteDensity[ph2];
                 //writelog("\n sp_name = {}, \t phase_id = {},  \t ind_k = {}", sp_name, phase_id,  ind_k);
-                if(phase_id==ph1)
+                for(size_t j = 0; j < 2; j++)
                 {
-                    if(surfArea[ph1] > surfArea[ph2])
+                    if(phase_id==edge_phaseID(i_edge,j))
                     {
-                        RHS_edge[ind_k] += multiplier*m_int*m_work[k]/gamma_prod;
-                    } else {
-                        //writelog("\n ph1 = {}, ph2 = {}, M_ratio= {}", ph1, ph2, m_int);
-                        RHS_edge[ind_k] += multiplier*m_work[k]/gamma_prod;
-                    }
-                } else {
-                    if(surfArea[ph1] > surfArea[ph2])
-                    {
-                        RHS_edge[ind_k] += multiplier*m_work[k]/gamma_prod;
-                    } else {
-                        RHS_edge[ind_k] += multiplier*(1/m_int)*m_work[k]/gamma_prod;
+                        RHS_edge[ind_k] += facet_ratio(i_edge,j)*m_work[k];
                     }
                 }
             }
+            i_edge++;
         }
     }
 
@@ -429,6 +372,105 @@ void Reactor::evalSurfaces(double* LHS, double* RHS, double* sdot)
         double wallarea = S->area();
         for (size_t k = 0; k < m_nsp; k++) {
             sdot[k] += m_work[bulkloc + k] * wallarea;
+        }
+    }
+}
+
+void Reactor::calculateFacetRatio()
+{
+    // Vector to save area of each surface, later needed in the calculation of sdot term
+    vector<double> surfArea(nSurfs(), 0.0);
+    
+    // Vector to site densities of each surface, later needed in the calculation of sdot term
+    vector<double> surfSiteDensity(nSurfs(), 0.0);
+
+    // Vector to save global phase_id of each surface species in the mechanism
+    surfSpeciesPhase.resize(m_nv_surf, -1);
+
+    size_t offset  =  m_nv - m_nv_surf;
+    size_t n_edges = 0;             // Number of edges
+    
+    // Loop over all surfaces and save facet area in `surfArea' vector.
+    size_t phase_id = 0;
+    size_t offset_nsurf = 0;
+    
+    for(auto S : m_surfaces) {
+        Kinetics* kin = S->kinetics();
+        SurfPhase* surf = S->thermo();
+        surfArea[phase_id] = S->area();
+        surfSiteDensity[phase_id] = surf->siteDensity();
+
+        if(kin->kineticsType() == "edge")
+        {
+            n_edges++;
+        }
+
+        // Update surfSpeciesPhasevector for each species
+        for(size_t k = 0; k < surf->nSpecies(); k++)
+        {
+            surfSpeciesPhase[offset_nsurf + k] =  phase_id;
+        }
+        offset_nsurf += surf->nSpecies();
+        phase_id++;
+    }
+
+    facet_ratio.resize(n_edges,2, 0.0);
+    edge_phaseID.resize(n_edges,2, -1);
+    
+    size_t i_edge = 0;
+    for(auto S : m_surfaces) {
+        Kinetics* kin = S->kinetics();
+        // Modify surface concentration if the edge is present
+        if(kin->kineticsType() == "edge")
+        {
+            SurfPhase* surf = S->thermo();
+            double rs0 = 1.0/surf->siteDensity();
+            size_t nk = surf->nSpecies(); // Only one dummy species here, nk = 1 for edges
+            size_t surf_nsp =  kin->nTotalSpecies(); 
+
+            // Find two surface phases involved in the edge reactions 
+            size_t ph1 = -1, ph2 = -1;
+            // surf_nsp contains `m_nsp' gas species, `nk' edge species and 
+            // surface species from adjacent surfaces
+            for(size_t k = nk+m_nsp; k < surf_nsp; k++)
+            {
+                // Get the index of species k in the array with all surface species
+                string sp_name  =  kin->kineticsSpeciesName(k);
+                size_t ind_k = componentIndex(sp_name) - offset;
+
+                // Get the phase index of surface species k in the entire reactor
+                size_t phase_id = surfSpeciesPhase[ind_k];
+                // Find two phases involved in the surface diffusion reaction
+                if(ph1 == -1)
+                {
+                    ph1 = phase_id;
+                } else if (phase_id>= 0 && phase_id != ph1)
+                {
+                    ph2 = phase_id;
+                }
+            }
+            // Save ids of involved phases in edge_phaseID array
+            edge_phaseID(i_edge, 0) = ph1;
+            edge_phaseID(i_edge, 1) = ph2;
+
+            double gamma_prod = surfSiteDensity[ph1]*surfSiteDensity[ph2];
+            double m_int;
+
+            //Find phase with the lowest surface area
+            if(surfArea[ph1] > surfArea[ph2]) // smaller area for ph2
+            {
+                // Calculate Mint constant: (gamma*A)_small/(gamma*A)_large (default)
+                m_int = surfArea[ph2]*surfSiteDensity[ph2]/(surfArea[ph1]*surfSiteDensity[ph1]);
+                facet_ratio(i_edge,0) = m_int/gamma_prod;
+                facet_ratio(i_edge,1) = 1/gamma_prod;
+            } else //smaller area for ph1
+            {
+                // Calculate Mint constant: (gamma*A)_small/(gamma*A)_large (default)
+                m_int = surfArea[ph1]*surfSiteDensity[ph1]/(surfArea[ph2]*surfSiteDensity[ph2]);
+                facet_ratio(i_edge,0) = 1/gamma_prod;
+                facet_ratio(i_edge,1) = m_int/gamma_prod;
+            }
+            i_edge++;
         }
     }
 }
